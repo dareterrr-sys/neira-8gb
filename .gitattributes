@@ -1,3 +1,4 @@
-# GitHub's language bar shows the code that runs now (src/, archive/); the measurement and experiment scripts
-# in experiments/ stay in the repository but are not counted (see README, «Устройство»)
+# GitHub's language bar shows only the code that runs now (src/); the measurement and experiment scripts
+# (experiments/) and the replaced code (archive/) stay in the repository but are not counted (see README, «Устройство»)
 experiments/** linguist-detectable=false
+archive/** linguist-detectable=false

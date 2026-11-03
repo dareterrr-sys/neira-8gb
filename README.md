@@ -53,8 +53,9 @@ src/            то, что работает сейчас
   voice/        сервер голоса (Qwen3-TTS, int8, LoRA, парковка), прогрев мозга
   knowledge/    словарь и справочник русского (скрипты сборки и поиска), OCR учебников
   start/        запуск всего вместе
-experiments/    замеры и опыты, на которых стоят цифры журнала (см. experiments/README.md); в полоске языков GitHub не учитываются (.gitattributes)
+experiments/    замеры и опыты, на которых стоят цифры журнала (см. experiments/README.md)
 archive/        заменённое (см. archive/README.md)
+                experiments/ и archive/ в полоске языков GitHub не учитываются (.gitattributes): она показывает только src/
 journal/        журнал исследований по темам (Obsidian), копия из хранилища автора
 docs/           статья (черновик), разбор ошибок совета (шаг 12)
 ```
