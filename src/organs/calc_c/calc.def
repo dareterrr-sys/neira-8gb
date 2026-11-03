@@ -1,0 +1,4 @@
+LIBRARY calc.dll
+
+EXPORTS
+calc_eval
