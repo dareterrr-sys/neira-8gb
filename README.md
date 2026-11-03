@@ -1,10 +1,14 @@
-# Нейра — локальный ИИ-компаньон на видеокарте 8 ГБ
+# Нейра — методы запуска и проверки больших MoE-моделей на домашнем железе
 
 > 🚧 **Исследовательский проект в разработке.** Код написан под одну конкретную машину (пути `D:\AI\…` прописаны жёстко), многое не доделано и не вычищено. Это журнал работы, а не готовый продукт.
 
 *[English below](#english)*
 
-Нейра — ИИ-компаньон, который целиком живёт на домашнем ПК (RTX 3060 Ti 8 ГБ, Ryzen 5 5600X, 32 ГБ RAM), без облака: свой мозг (Qwen3.6-35B-A3B), свой голос, память о собеседнике и «органы» — точный код там, где языковая модель ошибается.
+Нейра — исследовательский проект о том, как запускать языковую модель, которая в разы больше видеопамяти, и как сделать её ответы надёжнее: знать, когда она не знает, проверять её код и счёт, делить работу между ролями.
+
+Методы не привязаны к конкретному железу и модели. Здесь они показаны на стенде, где ограничения жёсткие: одна домашняя машина (RTX 3060 Ti **8 ГБ**, Ryzen 5 5600X, 32 ГБ RAM), MoE-модель Qwen3.6-35B-A3B (~23 ГБ весов) и одновременно свой голос — всё локально, без облака. Приёмы рассчитаны и на модели крупнее на более мощном железе (на них ещё не проверялись).
+
+Из этих методов собран ИИ-компаньон «Нейра»: мозг, голос, память о собеседнике и «органы» — точный код там, где языковая модель ошибается.
 
 Главный принцип проекта: **один шаг — одно изменение — один замер**. Каждое решение, включая неудачные, записано в [журнале](journal/00%20Журнал%20Нейры.md).
 
@@ -57,7 +61,7 @@ docs/           статья, разбор ошибок совета
 
 ## English
 
-**Neira** is a fully local AI companion running on a home PC with an **8 GB GPU** (RTX 3060 Ti): a 35B MoE brain (Qwen3.6-35B-A3B), a fine-tuned voice, long-term memory and deterministic "organs" for the tasks language models get wrong. 🚧 *Work in progress, written for one specific machine.*
+**Neira** is a research project on running language models several times larger than the GPU memory and on making their answers more reliable: knowing when the model does not know, checking its code and arithmetic, splitting work between roles. The methods are not tied to particular hardware: they are demonstrated on a deliberately tight test bench — one home PC with an **8 GB GPU** (RTX 3060 Ti), the Qwen3.6-35B-A3B MoE model (~23 GB of weights) and a voice model on the same card, fully local. The techniques are meant to scale to larger models on bigger hardware (not tested there yet). The methods are assembled into an AI companion, Neira. 🚧 *Work in progress, written for one specific machine.*
 
 Highlights:
 - **Hot MoE experts** — a llama.cpp patch keeps the most used experts (by an expert-usage map) in VRAM and computes the rest on the CPU. Overall generation went **11 → 42.7 tok/s** (~4×) on 8 GB: layout + MTP speculative decoding gave ~32, hot experts 32 → 42.7; prompt reading 285 → 580 tok/s.
