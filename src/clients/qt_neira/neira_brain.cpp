@@ -201,6 +201,12 @@ QString NeiraBrain::systemPrompt() const {
                               "(не Python, не другие языки): без вступлений, без эмоций, "
                               "без пояснений, без дублирования задания.");
     }
+    // общая текстовая персона всех чат-клиентов (03.11), запасная строка — если файла нет
+    static const QString persona = [] {
+        QFile f(QStringLiteral("D:/AI/neira-tools/neira_persona.txt"));
+        return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()).trimmed() : QString();
+    }();
+    if (!persona.isEmpty()) return persona;
     return QStringLiteral("Ты — Нейра, ИИ-девушка, которая живёт в компьютере собеседника. "
                           "Отвечаешь по-русски, живо, но по делу.");
 }

@@ -24,9 +24,18 @@ import neira_behavior as behavior  # noqa: E402
 
 BRAIN_URL = "http://127.0.0.1:8080/v1/chat/completions"
 CONF = r"D:\AI\Open-LLM-VTuber\conf.yaml"
+# общая текстовая персона всех чат-клиентов (CLI, C++, GUI, Qt); голосовая — в conf.yaml
+PERSONA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "neira_persona.txt")
 
 
 def load_persona():
+    try:
+        with open(PERSONA, encoding="utf-8") as f:
+            text = f.read().strip()
+        if text:
+            return text
+    except OSError:
+        pass
     try:
         import yaml
         conf = yaml.safe_load(open(CONF, encoding="utf-8"))

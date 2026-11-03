@@ -4,49 +4,65 @@
 
 *[English below](#english)*
 
-Нейра — исследовательский проект о том, как запускать языковую модель, которая в разы больше видеопамяти, и как сделать её ответы надёжнее: знать, когда она не знает, проверять её код и счёт, делить работу между ролями.
+Как проект описан в журнале: «Нейра — локальный ИИ-компаньон на домашнем ПК (RTX 3060 Ti 8 ГБ, 32 ГБ RAM): собственный голос, память по «шифрам» и разум из трёх уровней — «органы» на коде (восприятие чисел, календарь, калькулятор, сверка речи), «совет» ролей её же мозга (специалисты, красный критик, мыслитель) и исследование экспертов внутри мозга (карта и управление)» ([оглавление журнала](journal/00%20Журнал%20Нейры.md)).
 
-Методы не привязаны к конкретному железу и модели. Здесь они показаны на стенде, где ограничения жёсткие: одна домашняя машина (RTX 3060 Ti **8 ГБ**, Ryzen 5 5600X, 32 ГБ RAM), MoE-модель Qwen3.6-35B-A3B (~23 ГБ весов) и одновременно свой голос — всё локально, без облака. Приёмы рассчитаны и на модели крупнее на более мощном железе (на них ещё не проверялись).
+Суть работы (уточнение автора): методы для MoE-моделей, которые больше видеопамяти, и для надёжности их ответов. Показаны на стенде 8 ГБ с моделью Qwen3.6-35B-A3B; **на других моделях и другом железе не проверялись**.
 
-Из этих методов собран ИИ-компаньон «Нейра»: мозг, голос, память о собеседнике и «органы» — точный код там, где языковая модель ошибается.
+Стенд: RTX 3060 Ti 8 ГБ, 32 ГБ RAM (журнал); процессор Ryzen 5 5600X (технический отчёт автора, не журнал); модель Qwen3.6-35B-A3B, файл `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf` — 22.9 ГБ (размер файла на диске); голос работает на той же карте.
 
-Главный принцип проекта: **один шаг — одно изменение — один замер**. Каждое решение, включая неудачные, записано в [журнале](journal/00%20Журнал%20Нейры.md).
+Правила работы из журнала ([Цель и метод](journal/Цель%20и%20метод.md)):
+- «Один шаг — одно изменение и один замер; не больше двух попыток в рамках шага, потом «отложен» с причиной».
+- «Главная метрика — не доля верных ответов, а доля «уверенно неверных»; честное «не знаю» ошибкой не считается».
 
-## Что здесь интересного
+## Что сделано и что измерено
 
-| Направление | Что сделано | Замер |
-|---|---|---|
-| **Горячие эксперты MoE** | Своя правка llama.cpp: самые используемые эксперты (по карте экспертов) один раз копируются в VRAM и считаются там, остальные — на CPU; пул размеряется по реально свободной VRAM | генерация **11 → 42.7 ток/с** (≈4×) за всю оптимизацию: раскладка + MTP дали ~32, горячие эксперты — 32 → 42.7; чтение промпта 285 → 580 ток/с |
-| **Датчик сомнения** | Линейный зонд на скрытом состоянии (слой 16) предсказывает, знает ли модель ответ; встроен в сервер | AUC 0.955–0.986 на фактах |
-| **Вектор «не знаю»** | Управляющий вектор отказа, включаемый только на вопросах эрудиции | уверенная ложь о незнакомых людях 65 → 26 из 80, вместе с датчиком — до 2; задачи не тронуты |
-| **Совет ролей v4** | Три специалиста из того же мозга; спор решает «мыслитель»; числовой итог — слепые проверки | MGSM-ru ≈ 95% после разбора ошибок |
-| **Органы** | Калькулятор, календарь, буквы, слова, единицы, словари русского языка — код вместо токенов | органы слов и единиц: 27 → 47 из 60 |
-| **Голос** | Fine-tune Qwen3-TTS (LoRA) + int8 со своим Triton-ядром, «парковка» голоса в RAM за 0.1 с | голос 4.9 → 2.5 ГБ VRAM |
+Цифры — из записей журнала (дата и тема указаны). Где журнал противоречив или замера нет, так и написано.
 
-Подробный рассказ — [docs/article_ru.md](docs/article_ru.md) (черновик).
+| Направление | Что сделано (словами журнала) | Замер | Источник |
+|---|---|---|---|
+| **Скорость мозга до горячих экспертов** | MTP (`--spec-type draft-mtp`) + «всё не-экспертное и память контекста на карте», эксперты в RAM | письмо **11.4 → 40 ток/с** | [Мозг](journal/Мозг%20—%20версии%20и%20скорость.md), 22.10, шаг 8в.2 |
+| **Горячие эксперты MoE** (мозг М2.2) | «горячие эксперты по карте копируются в видеопамять один раз и считаются там, холодные — на процессоре, на месте»; своя правка llama.cpp (llama-neira-hot), «размер по свободной видеопамяти» | «Запись **32 → 42.7 ток/с**, чтение длинного запроса **285 → 580 ток/с**» | [Мозг](journal/Мозг%20—%20версии%20и%20скорость.md), 28.10 |
+| ⚠️ расхождение | 22.10 итог — 40 ток/с, а 28.10 база — 32 ток/с; почему база ниже, журнал не объясняет | **не проверено** | — |
+| **Вектор «не знаю»** (совет v3.8) | «вектор «не знаю» только на вопросах эрудиции» | «Уверенная ложь **65 → 26 из 80**» о незнакомых людях; «известные и задачи не тронуты»; цена — «4 малоизвестных, которых совет знал, теперь «не знаю»» | [Датчик сомнения](journal/Датчик%20сомнения.md), 24.10 |
+| **Датчик сомнения** (совет v3.9) | датчик «линейный, слой 16, поток до ответа»; «встроен в сервер llama-neira» (запрос `"probe": true`) | AUC **0.986** на оставшейся лжи v3.8 о людях; **0.955** при переносе на другие факты. Уверенная ложь (пересчёт новым проверяющим, из 80): v3.7 **64** / v3.8 **22** / v3.9 **2** | [Датчик сомнения](journal/Датчик%20сомнения.md), 24.10 |
+| ❌ датчик на рассуждениях | ворота для ошибок рассуждения | «для рассуждений — AUC ~0.7, слишком много ложных тревог» — **отложено** | там же |
+| **Совет v4.0** (живой) | «убраны красный критик, судья по шагам и отдельный «рот»»; три специалиста, при расхождении — мыслитель (комментарий в `basic_memory_agent.py`) | «Мыслитель исправляет неверное большинство 26/28/24/9 раз и ни разу не портит верное»; распознаватель задач «94–98% наборов, 0 из 36 реплик автора». **Точность v4.0 на наборах не измерялась** | [Совет](journal/Совет.md), 29.10 |
+| Совет до v4 | v3.10 (с судьёй по шагам) | MGSM 229/250; после разбора ошибок v3.6: «Настоящая точность: MGSM ~95% (237/250)» | [Совет](journal/Совет.md), 24–25.10 |
+| **Органы** | модель переводит вопрос в вызов или выражение, код вычисляет; «два способа пишут команду, справка только если сошлись» | органы слов и единиц: «Свои 60: без справки 27, со справкой 47» (наборы, где «ответы считают сами органы»); буквы на work3 «8/8 (раньше 5–7 из 8)»; калькулятор на C — «981/981 совпали» с Python-калькулятором | [Органы](journal/Органы.md), 20–25.10 |
+| **Орган «русский»** (C++ + словари + сети) | ответы на задания ЕГЭ по русскому, где словарь или сеть уверены | «Весь банк 1122 задания: 499/499 при охвате 44%»; «ЕГЭ по русскому: 10 → 28 (≈ 30) из 34» — с оговоркой журнала: «набор из 34 мал» | [Русский язык и ЕГЭ](journal/Русский%20язык%20и%20ЕГЭ.md) |
+| **Голос** | «свой голос на основе Qwen3-TTS 1.7B»; с 26.10 — версия v2 (LoRA); int8 со «своим ядром на Triton» | «Видеопамять голоса **4878 → 2476 МиБ** (−2.4 ГБ)»; «На слух автор разницы не слышит». Парковка в RAM «за 0.3 с» — только строка плана, **отдельной записи с замером нет** | [Голос](journal/Голос.md), 28.10; [План шагов](journal/План%20шагов.md), 14а |
+| **Память** | «факты с «шифрами» e5, всплывают, если ближе фона на 0.012» | примеры из записи; числового замера нет | [Память](journal/Память.md), 20.10 |
+
+Пример того, зачем органу два способа: справка калькулятора «24/3+7=15» посчитана верно, но выражение составлено неверно; в разборе ошибок совета это вид «ложная справка калькулятора (выражение составлено неверно…)» — 3 случая ([Совет](journal/Совет.md), 24.10; [docs/diagnosis_step12.md](docs/diagnosis_step12.md)).
+
+Журнал ведётся с 14.10 по 30.10.2026, 124 записи. Работа после 30.10 (OCR учебников 31.10, Qt-приложение и общая персона чат-клиентов 01–03.11) в журнал ещё не внесена.
+
+Рассказ о проекте — [docs/article_ru.md](docs/article_ru.md) (черновик, **с журналом построчно не сверен**).
 
 ## Устройство
 
 ```
-src/
-  brain/        конфиги мозга, патч llama.cpp (горячие эксперты, датчик, cvec), пул экспертов, веса датчика
-  expert-map/   построение пула экспертов и карты по корпусу
-  agent/        диспетчер реплик (правки Open-LLM-VTuber): органы, совет, память, обмен VRAM с голосом
-  council/      совет ролей, маршрутизатор, оценка на наборах вопросов
-  organs/       органы на C/C++/Python (bukvy, slova, edinicy, russkiy, perception, calendar…)
-  chat/         текстовый чат, правила поведения, память фактов, орган проверки кода check_code
-  clients/      приложение Нейры на Qt/QML (qt_neira); ранние клиенты C++ CLI и Win32 GUI — в clients/old
-  voice/        сервер голоса (Qwen3-TTS, int8, судьи качества)
-  knowledge/    скрипты библиотеки русского языка и OCR
+src/            то, что работает сейчас
+  brain/        конфиги мозга М2.2 (brain-v40, brain-v40-live), патч llama.cpp (горячие эксперты, вектор, датчик), пул экспертов, веса датчика
+  expert-map/   make_pool.py — пул горячих экспертов по карте
+  agent/        диспетчер реплик голосового приложения (правка Open-LLM-VTuber): органы, совет, память, обмен видеокартой с голосом
+  council/      совет v4.0 в живом чате, распознаватель задач, ege_one (ЕГЭ по русскому одним вызовом)
+  organs/       калькулятор, восприятие чисел, календарь, буквы, слова, единицы, «русский», фильтр грамотности, обмен видеокартой
+  chat/         текстовый чат (Python), правила поведения, память фактов, общая персона чат-клиентов, орган проверки кода check_code
+  clients/      qt_neira — своё приложение на Qt/QML вместо браузерного чата (в разработке)
+  voice/        сервер голоса (Qwen3-TTS, int8, LoRA, парковка), прогрев мозга
+  knowledge/    словарь и справочник русского (скрипты сборки и поиска), OCR учебников
   start/        запуск всего вместе
-journal/        журнал исследований по темам (Obsidian)
-docs/           статья, разбор ошибок совета
+experiments/    замеры и опыты, на которых стоят цифры журнала (см. experiments/README.md)
+archive/        заменённое (см. archive/README.md)
+journal/        журнал исследований по темам (Obsidian), копия из хранилища автора
+docs/           статья (черновик), разбор ошибок совета (шаг 12)
 ```
 
 ## Чего здесь нет — и почему
 
-- **Весов моделей и голоса.** Голос дообучен на чужих записях, поэтому публикуется только метод, без весов и данных.
-- **Банков заданий ЕГЭ, справочных текстов (Розенталь, Ожегов) и списков ФИПИ** — это чужие материалы.
+- **Весов моделей и голоса.** Голос дообучен на чужих записях (журнал «Голос»), поэтому публикуется только метод, без весов и данных.
+- **Банков заданий ЕГЭ («Решу ЕГЭ»), справочных текстов (Розенталь, Ожегов) и списков ФИПИ** — это чужие материалы. Скрипты, которые их собирают и читают, здесь есть, сами данные — нет.
 - Используются: [llama.cpp](https://github.com/ggml-org/llama.cpp), [Qwen3.6](https://huggingface.co/Qwen), [Qwen3-TTS](https://github.com/QwenLM), [Open-LLM-VTuber](https://github.com/Open-LLM-VTuber/Open-LLM-VTuber), RUPunct, RUAccent, OpenCorpora, Hunspell — у каждого своя лицензия.
 
 ## Контакты
@@ -61,14 +77,13 @@ docs/           статья, разбор ошибок совета
 
 ## English
 
-**Neira** is a research project on running language models several times larger than the GPU memory and on making their answers more reliable: knowing when the model does not know, checking its code and arithmetic, splitting work between roles. The methods are not tied to particular hardware: they are demonstrated on a deliberately tight test bench — one home PC with an **8 GB GPU** (RTX 3060 Ti), the Qwen3.6-35B-A3B MoE model (~23 GB of weights) and a voice model on the same card, fully local. The techniques are meant to scale to larger models on bigger hardware (not tested there yet). The methods are assembled into an AI companion, Neira. 🚧 *Work in progress, written for one specific machine.*
+**Neira** is a local AI companion on one home PC (RTX 3060 Ti **8 GB**, 32 GB RAM) and a research log of methods for running MoE models larger than GPU memory and for making their answers more reliable. Shown on the Qwen3.6-35B-A3B model (22.9 GB file); **not tested on other models or hardware**. 🚧 *Work in progress, written for one specific machine.* All figures below come from the research journal (Russian, [`journal/`](journal/)):
 
-Highlights:
-- **Hot MoE experts** — a llama.cpp patch keeps the most used experts (by an expert-usage map) in VRAM and computes the rest on the CPU. Overall generation went **11 → 42.7 tok/s** (~4×) on 8 GB: layout + MTP speculative decoding gave ~32, hot experts 32 → 42.7; prompt reading 285 → 580 tok/s.
-- **Doubt sensor** — a linear probe on layer-16 hidden states predicts whether the model knows the answer (AUC 0.955–0.986 on facts), built into the server.
-- **"I don't know" steering vector**, applied only to factual-recall questions: confident lies about unknown people 65 → 26 of 80 (→ 2 with the sensor), reasoning untouched.
-- **Council of roles** from the same model with a "thinker" for disputes and blind numeric checks.
-- **Organs** — code instead of tokens: calculator, calendar, letters, words, units, Russian-language dictionaries.
-- **Voice** — Qwen3-TTS LoRA fine-tune, int8 with a custom Triton kernel (4.9 → 2.5 GB VRAM), parked in RAM in 0.1 s when the brain needs the GPU.
+- **Brain speed**: MTP + all non-expert weights and the KV cache on the GPU, experts in RAM — writing 11.4 → 40 tok/s (22.10). **Hot experts** (own llama.cpp patch: the most used experts by an expert map are copied to VRAM once and computed there, the rest on the CPU) — writing 32 → 42.7 tok/s, long-prompt reading 285 → 580 tok/s (28.10). Why the 28.10 baseline is 32 and not 40 is not explained in the journal.
+- **"I don't know" steering vector**, applied only to factual-recall questions: confident lies about unknown people 65 → 26 of 80 (24.10).
+- **Doubt sensor** — a linear probe on layer-16 hidden states before the answer, built into the server: AUC 0.986 on the remaining lies about people, 0.955 on other facts; with it, confident lies (recount, of 80) 64 → 22 → 2. On reasoning errors AUC ~0.7 — shelved.
+- **Council v4.0** (three specialists, a thinker on disagreement): the thinker fixed a wrong majority 26/28/24/9 times and never broke a right one. Accuracy of v4.0 on the test sets **not measured yet**.
+- **Organs** — the model writes the call or expression, code computes it, a note is given only when two independent routes agree: words and units organs 27 → 47 of 60.
+- **Voice** — Qwen3-TTS 1.7B fine-tune, int8 with a custom Triton kernel: 4878 → 2476 MiB VRAM.
 
-The research journal (Russian) is in [`journal/`](journal/). Model weights, voice data and third-party datasets are not included. Own code is licensed under **AGPL-3.0**. Questions and bug reports: **Issues**; author — [Filldas](https://github.com/dareterrr-sys).
+Model weights, voice data and third-party datasets are not included. Own code is licensed under **AGPL-3.0**. Questions and bug reports: **Issues**; author — [Filldas](https://github.com/dareterrr-sys).
