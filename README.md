@@ -12,7 +12,7 @@
 
 | Направление | Что сделано | Замер |
 |---|---|---|
-| **Горячие эксперты MoE** | Своя правка llama.cpp: самые используемые эксперты (по карте экспертов) один раз копируются в VRAM и считаются там, остальные — на CPU; пул размеряется по реально свободной VRAM | генерация 32 → 42.7 ток/с, чтение промпта 285 → 580 ток/с на 8 ГБ |
+| **Горячие эксперты MoE** | Своя правка llama.cpp: самые используемые эксперты (по карте экспертов) один раз копируются в VRAM и считаются там, остальные — на CPU; пул размеряется по реально свободной VRAM | генерация **11 → 42.7 ток/с** (≈4×) за всю оптимизацию: раскладка + MTP дали ~32, горячие эксперты — 32 → 42.7; чтение промпта 285 → 580 ток/с |
 | **Датчик сомнения** | Линейный зонд на скрытом состоянии (слой 16) предсказывает, знает ли модель ответ; встроен в сервер | AUC 0.955–0.986 на фактах |
 | **Вектор «не знаю»** | Управляющий вектор отказа, включаемый только на вопросах эрудиции | уверенная ложь о незнакомых людях 65 → 26 из 80, вместе с датчиком — до 2; задачи не тронуты |
 | **Совет ролей v4** | Три специалиста из того же мозга; спор решает «мыслитель»; числовой итог — слепые проверки | MGSM-ru ≈ 95% после разбора ошибок |
@@ -60,7 +60,7 @@ docs/           статья, разбор ошибок совета
 **Neira** is a fully local AI companion running on a home PC with an **8 GB GPU** (RTX 3060 Ti): a 35B MoE brain (Qwen3.6-35B-A3B), a fine-tuned voice, long-term memory and deterministic "organs" for the tasks language models get wrong. 🚧 *Work in progress, written for one specific machine.*
 
 Highlights:
-- **Hot MoE experts** — a llama.cpp patch keeps the most used experts (by an expert-usage map) in VRAM and computes the rest on the CPU: generation 32 → 42.7 tok/s, prompt reading 285 → 580 tok/s on 8 GB.
+- **Hot MoE experts** — a llama.cpp patch keeps the most used experts (by an expert-usage map) in VRAM and computes the rest on the CPU. Overall generation went **11 → 42.7 tok/s** (~4×) on 8 GB: layout + MTP speculative decoding gave ~32, hot experts 32 → 42.7; prompt reading 285 → 580 tok/s.
 - **Doubt sensor** — a linear probe on layer-16 hidden states predicts whether the model knows the answer (AUC 0.955–0.986 on facts), built into the server.
 - **"I don't know" steering vector**, applied only to factual-recall questions: confident lies about unknown people 65 → 26 of 80 (→ 2 with the sensor), reasoning untouched.
 - **Council of roles** from the same model with a "thinker" for disputes and blind numeric checks.
