@@ -35,7 +35,7 @@ src/
   council/      совет ролей, маршрутизатор, оценка на наборах вопросов
   organs/       органы на C/C++/Python (bukvy, slova, edinicy, russkiy, perception, calendar…)
   chat/         текстовый чат, правила поведения, память фактов, орган проверки кода check_code
-  clients/      нативные клиенты: C++ CLI, Win32 GUI, Qt/QML
+  clients/      приложение Нейры на Qt/QML (qt_neira); ранние клиенты C++ CLI и Win32 GUI — в clients/old
   voice/        сервер голоса (Qwen3-TTS, int8, судьи качества)
   knowledge/    скрипты библиотеки русского языка и OCR
   start/        запуск всего вместе
