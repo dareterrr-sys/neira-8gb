@@ -1,0 +1,874 @@
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
+index 5428d51..6193347 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -1652,6 +1652,12 @@ static void ggml_compute_forward_mul_mat_id(
+             for (int id = 0; id < n_ids; ++id) {
+                 const int32_t i02 = *(const int32_t *) ((const char *) ids->data + iid1*ids->nb[1] + id*ids->nb[0]);
+ 
++                // Neira hot experts: -1 = an expert computed elsewhere (in VRAM); its row is zero here
++                if (i02 < 0) {
++                    memset((char *) dst->data + id*nb1 + iid1*nb2, 0, ne0*sizeof(float));
++                    continue;
++                }
++
+                 assert(i02 >= 0 && i02 < n_as);
+ 
+                 MMID_MATRIX_ROW(i02, matrix_row_counts[i02]) = (struct mmid_row_mapping) {id, iid1};
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 97250c2..f8a2161 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -29,6 +29,7 @@ set(LLAMA_CORE_SOURCES
+     llama-kv-cache-dsv4.cpp
+     llama-memory.cpp
+     llama-moe-cache.cpp
++    llama-neira-hot.cpp
+     llama-memory-hybrid.cpp
+     llama-memory-hybrid-iswa.cpp
+     llama-memory-hybrid-idx.cpp
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 9ee64b5..3a163e1 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -552,6 +552,11 @@ llama_context::llama_context(
+             moe_cache = std::make_unique<llama_moe_cache>(model, backend_ptrs, backend_buft, cparams.moe_cache_size);
+         }
+ 
++        // Neira hot experts: the most used experts also in VRAM, the rest computed on the CPU (no per-token uploads)
++        if (const char * hot_path = getenv("NEIRA_HOT_EXPERTS"); hot_path != nullptr && *hot_path && moe_cache == nullptr) {
++            neira_hot = llama_neira_hot::shared(model, backend_ptrs, backend_buft, hot_path);
++        }
++
+         sched_reserve();
+ 
+         if (!cparams.flash_attn) {
+@@ -1819,6 +1824,9 @@ static bool needs_raw_logits(const llama_ubatch & ubatch, const std::map<llama_s
+ }
+ 
+ int llama_context::decode(const llama_batch_ext & batch_inp) {
++    if (neira_hot) {
++        neira_hot->fill(); // once: the hot experts into VRAM
++    }
+     if (!memory) {
+         LLAMA_LOG_DEBUG("%s: cannot decode batches with this context (calling encode() instead)\n", __func__);
+         return encode(batch_inp);
+@@ -2700,6 +2708,7 @@ llm_graph_params llama_context::graph_params(
+         /*.mctx        =*/ mctx,
+         /*.cross       =*/ &cross,
+         /*.moe_cache   =*/ moe_cache.get(),
++        /*.neira_hot   =*/ neira_hot.get(),
+         /*.prec_policy =*/ &model.prec_policy,
+         /*.hdmd        =*/ model.hdmd.rot.empty() ? nullptr : &model.hdmd,
+         /*.samplers    =*/ sampling.samplers,
+diff --git a/src/llama-context.h b/src/llama-context.h
+index 6938fb1..18ed1e6 100644
+--- a/src/llama-context.h
++++ b/src/llama-context.h
+@@ -8,6 +8,7 @@
+ #include "llama-impl.h"
+ #include "llama-memory.h"
+ #include "llama-moe-cache.h"
++#include "llama-neira-hot.h"
+ 
+ #include "ggml-cpp.h"
+ #include "ggml-opt.h"
+@@ -308,6 +309,7 @@ private:
+ 
+     llama_memory_ptr memory;
+     llama_moe_cache_ptr moe_cache;
++    std::shared_ptr<llama_neira_hot> neira_hot; // Neira hot experts (mixed CPU/GPU split), one per model: the MTP draft context shares it
+ 
+     // decode output (2-dimensional array: [n_outputs][n_vocab])
+     buffer_view<float> logits = {nullptr, 0};
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index f69fe63..95fc0a1 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -3,6 +3,7 @@
+ #include "llama-impl.h"
+ #include "llama-model.h"
+ #include "llama-moe-cache.h"
++#include "llama-neira-hot.h"
+ #include "llama-batch.h"
+ #include "llama-cparams.h"
+ #include "llama-sampler.h"
+@@ -168,6 +169,22 @@ bool llm_graph_input_embd_h::can_reuse(const llm_graph_params & params) {
+     return res;
+ }
+ 
++// Neira expert steering
++void llm_graph_input_moe_steer::set_input(const llama_ubatch * ubatch) {
++    GGML_UNUSED(ubatch);
++    std::vector<float> data(n_expert*n_layer, 0.0f);
++    const char * path = getenv("NEIRA_MOE_STEER");
++    if (path) {
++        FILE * f = fopen(path, "rb");
++        if (f) {
++            const size_t n = fread(data.data(), sizeof(float), data.size(), f);
++            GGML_UNUSED(n);
++            fclose(f);
++        }
++    }
++    ggml_backend_tensor_set(steer, data.data(), 0, data.size()*sizeof(float));
++}
++
+ void llm_graph_input_pos::set_input(const llama_ubatch * ubatch) {
+     if (ubatch->pos && pos) {
+         const int64_t n_tokens = ubatch->n_tokens;
+@@ -1557,6 +1574,7 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
+     mctx             (params.mctx),
+     cross            (params.cross),
+     moe_cache        (params.moe_cache),
++    neira_hot        (params.neira_hot),
+     prec_policy      (params.prec_policy),
+     hdmd             (params.hdmd),
+     samplers         (params.samplers),
+@@ -2195,6 +2213,14 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
+         cb(selection_probs, "ffn_moe_probs_biased", il);
+     }
+ 
++    // Neira expert steering: bias the SELECTION only (probs stay unbiased for the expert weights)
++    if (getenv("NEIRA_MOE_STEER") && il >= 0 && il < (int) hparams.n_layer()) {   // the MTP head is an extra layer past the table
++        ggml_tensor * steer = build_inp_moe_steer(n_expert);
++        ggml_tensor * row = ggml_view_2d(ctx0, steer, n_expert, 1, steer->nb[1], (size_t) il*steer->nb[1]);
++        selection_probs = ggml_add(ctx0, selection_probs, row);
++        cb(selection_probs, "ffn_moe_probs_steered", il);
++    }
++
+     // llama4 doesn't have exp_probs_b, and sigmoid is only used after top_k
+     // see: https://github.com/meta-llama/llama-models/blob/699a02993512fb36936b1b0741e13c06790bcf98/models/llama4/moe.py#L183-L198
+     if (arch == LLM_ARCH_LLAMA4) {
+@@ -2282,6 +2308,61 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
+     //call early so that topk-moe can be used
+     ggml_build_forward_expand(gf, weights);
+ 
++    // Neira hot experts (generation only): the hot experts of the selection are computed on the GPU from the VRAM
++    // banks (a cold one reads the zero expert there), the cold ones on the CPU from host memory (a hot one is id -1
++    // there: skipped, a zero row); the two halves are added. Nothing is uploaded per token.
++    if (const auto * hot = neira_hot ? neira_hot->get(il) : nullptr;
++            hot != nullptr && n_tokens > 0 && n_tokens <= llama_neira_hot::max_tokens && selected_experts_in == nullptr &&
++            !weight_before_ffn && type_op == LLM_FFN_SILU && up_exps && gate_exps && !gate_up_exps &&
++            !up_exps_b && !gate_exps_b && !down_exps_b && !up_exps_s && !gate_exps_s && !down_exps_s &&
++            hdmd == nullptr && (loras == nullptr || loras->empty()) && hparams.swiglu_clamp_exp[il] <= 1e-6f) {
++        ggml_tensor * ids = selected_experts;
++        if (!ggml_is_contiguous(ids)) {
++            ids = ggml_cont(ctx0, ids);
++        }
++        ids = ggml_reshape_1d(ctx0, ids, ggml_nelements(ids));
++        ggml_tensor * ids_hot  = ggml_reshape_2d(ctx0, ggml_get_rows(ctx0, hot->hot_map,  ids), n_expert_used, n_tokens);
++        ggml_tensor * ids_cold = ggml_reshape_2d(ctx0, ggml_get_rows(ctx0, hot->cold_map, ids), n_expert_used, n_tokens);
++        cb(ids_hot,  "ffn_moe_hot_ids",  il);
++        cb(ids_cold, "ffn_moe_cold_ids", il);
++
++        ggml_tensor * x = ggml_reshape_3d(ctx0, cur, n_embd, 1, n_tokens);
++        auto mm = [&](ggml_tensor * as, ggml_tensor * b, ggml_tensor * sel) {
++            ggml_tensor * r = ggml_mul_mat_id(ctx0, as, b, sel);
++            if (prec_policy) {
++                prec_policy->apply(r);
++            }
++            return r;
++        };
++        auto ffn = [&](ggml_tensor * up_t, ggml_tensor * gate_t, ggml_tensor * down_t, ggml_tensor * sel, const char * name) {
++            ggml_tensor * u = mm(up_t,   x, sel);
++            ggml_tensor * g = mm(gate_t, x, sel);
++            ggml_tensor * a = ggml_swiglu_split(ctx0, g, u);
++            ggml_tensor * d = mm(down_t, a, sel); // [n_embd, n_expert_used, n_tokens]
++            cb(d, name, il);
++            return d;
++        };
++        ggml_tensor * out_hot  = ffn(hot->up, hot->gate, hot->down, ids_hot, "ffn_moe_down_hot");
++        ggml_tensor * out_cold = ffn(up_exps, gate_exps, down_exps, ids_cold, "ffn_moe_down_cold");
++
++        // a hot expert is a zero row on the CPU side (id -1), a cold one the zero expert on the GPU side
++        ggml_tensor * ex = ggml_mul(ctx0, ggml_add(ctx0, out_hot, out_cold), weights);
++        cb(ex, "ffn_moe_weighted", il);
++        ggml_build_forward_expand(gf, ex);
++
++        const uint32_t n_used = hparams.n_expert_used(il);
++        ggml_tensor * moe_out = nullptr;
++        for (uint32_t i = 0; i < n_used; ++i) {
++            ggml_tensor * v = ggml_view_2d(ctx0, ex, n_embd, n_tokens, ex->nb[2], i*ex->nb[1]);
++            moe_out = moe_out ? ggml_add(ctx0, moe_out, v) : v;
++        }
++        if (n_used == 1) {
++            moe_out = ggml_cont(ctx0, moe_out);
++        }
++        cb(moe_out, "ffn_moe_out", il);
++        return moe_out;
++    }
++
+     // the experts of host-resident layers may be read from the MoE cache
+     ggml_tensor * slots = build_moe_cache_slots(selected_experts, up_exps, gate_exps, down_exps, gate_up_exps, il);
+ 
+@@ -2702,6 +2783,21 @@ ggml_tensor * llm_graph_context::build_inp_embd(ggml_tensor * tok_embd, float to
+     return cur;
+ }
+ 
++// Neira expert steering
++ggml_tensor * llm_graph_context::build_inp_moe_steer(int64_t n_expert) const {
++    if (moe_steer) {
++        return moe_steer;
++    }
++    auto inp = std::make_unique<llm_graph_input_moe_steer>(n_expert, hparams.n_layer());
++    auto & cur = inp->steer;
++    cur = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_expert, hparams.n_layer());
++    ggml_set_input(cur);
++    cb(cur, "inp_moe_steer", -1);
++    res->add_input(std::move(inp));
++    moe_steer = cur;
++    return cur;
++}
++
+ ggml_tensor * llm_graph_context::build_inp_pos() const {
+     auto inp = std::make_unique<llm_graph_input_pos>(hparams.n_pos_per_embd(), hparams.rope_section_order);
+ 
+diff --git a/src/llama-graph.h b/src/llama-graph.h
+index e853a02..00612c9 100644
+--- a/src/llama-graph.h
++++ b/src/llama-graph.h
+@@ -23,6 +23,7 @@ struct llama_prec_policy;
+ struct llama_hadamard;
+ 
+ class llama_moe_cache;
++class llama_neira_hot;
+ 
+ struct llama_memory_context_i;
+ 
+@@ -184,6 +185,20 @@ public:
+     const llama_rope_section_order rope_section_order = LLAMA_ROPE_SECTION_ORDER_TYXZ;
+ };
+ 
++// Neira expert steering (research patch): per-layer, per-expert selection bias read from NEIRA_MOE_STEER
++class llm_graph_input_moe_steer : public llm_graph_input_i {
++public:
++    llm_graph_input_moe_steer(int64_t n_expert, int64_t n_layer) : n_expert(n_expert), n_layer(n_layer) {}
++    virtual ~llm_graph_input_moe_steer() = default;
++
++    void set_input(const llama_ubatch * ubatch) override;
++
++    ggml_tensor * steer = nullptr; // F32 [n_expert, n_layer]
++
++    const int64_t n_expert;
++    const int64_t n_layer;
++};
++
+ // temperature tuning, used by llama4
+ class llm_graph_input_attn_temp : public llm_graph_input_i {
+ public:
+@@ -801,6 +816,7 @@ struct llm_graph_params {
+     const llama_memory_context_i * mctx;
+     const llama_cross            * cross;
+     const llama_moe_cache        * moe_cache;
++    const llama_neira_hot        * neira_hot = nullptr; // Neira hot experts (mixed CPU/GPU split)
+ 
+     const llama_prec_policy * prec_policy = nullptr;
+ 
+@@ -1054,6 +1070,7 @@ struct llm_graph_context {
+     const llama_memory_context_i * mctx;
+     const llama_cross            * cross;
+     const llama_moe_cache        * moe_cache;
++    const llama_neira_hot        * neira_hot; // Neira hot experts (mixed CPU/GPU split)
+ 
+     const llama_prec_policy * prec_policy;
+ 
+@@ -1222,6 +1239,8 @@ struct llm_graph_context {
+     // tok_scale: applied to token rows only
+     ggml_tensor * build_inp_embd(ggml_tensor * tok_embd, float tok_scale = 1.0f) const;
+     ggml_tensor * build_inp_pos() const;
++    ggml_tensor * build_inp_moe_steer(int64_t n_expert) const; // Neira expert steering
++    mutable ggml_tensor * moe_steer = nullptr;                  // Neira expert steering: one input per graph
+     ggml_tensor * build_inp_attn_scale() const;
+     ggml_tensor * build_inp_out_ids() const;
+     ggml_tensor * build_inp_mean() const;
+diff --git a/src/llama-neira-hot.cpp b/src/llama-neira-hot.cpp
+new file mode 100644
+index 0000000..d6a6b4e
+--- /dev/null
++++ b/src/llama-neira-hot.cpp
+@@ -0,0 +1,249 @@
++#include "llama-neira-hot.h"
++
++#include "llama-impl.h"
++#include "llama-model.h"
++
++#include <algorithm>
++#include <map>
++#include <mutex>
++#include <cstdio>
++#include <cstdlib>
++#include <stdexcept>
++
++static bool neira_hot_host_weight(const ggml_tensor * t) {
++    return t != nullptr && t->buffer != nullptr &&
++        ggml_backend_buffer_get_usage(t->buffer) == GGML_BACKEND_BUFFER_USAGE_WEIGHTS &&
++        ggml_backend_buffer_is_host(t->buffer);
++}
++
++llama_neira_hot::llama_neira_hot(const llama_model & model, const std::vector<ggml_backend_t> & backends,
++                                 const std::vector<ggml_backend_buffer_type_t> & bufts, const std::string & path) {
++    // the pool: per layer k hot experts by use, then one stand-in for the cold side (the next most used expert)
++    FILE * f = fopen(path.c_str(), "rb");
++    if (f == nullptr) {
++        throw std::runtime_error("NEIRA_HOT_EXPERTS: cannot open " + path);
++    }
++    int32_t n_layer_f = 0;
++    int32_t k = 0;
++    bool ok = fread(&n_layer_f, sizeof(int32_t), 1, f) == 1 && fread(&k, sizeof(int32_t), 1, f) == 1 &&
++        n_layer_f > 0 && k > 0;
++    std::vector<int32_t> pool(ok ? (size_t) n_layer_f*(k + 1) : 0);
++    ok = ok && fread(pool.data(), sizeof(int32_t), pool.size(), f) == pool.size();
++    fclose(f);
++    if (!ok) {
++        throw std::runtime_error("NEIRA_HOT_EXPERTS: bad file " + path);
++    }
++
++    ggml_backend_t gpu = nullptr;
++    ggml_backend_buffer_type_t gpu_buft = nullptr;
++    for (size_t i = 0; i < backends.size(); ++i) {
++        if (ggml_backend_dev_type(ggml_backend_get_device(backends[i])) == GGML_BACKEND_DEVICE_TYPE_GPU) {
++            gpu      = backends[i];
++            gpu_buft = bufts[i];
++            break;
++        }
++    }
++    if (gpu == nullptr) {
++        throw std::runtime_error("NEIRA_HOT_EXPERTS needs a GPU");
++    }
++    const int64_t n_expert = model.hparams.n_expert;
++    const size_t  n_layer  = std::min((size_t) n_layer_f, model.layers.size());
++    layers.resize(model.layers.size());
++
++    // the pool shrinks to the free VRAM: the compute buffers (made after this) and the author's other programs
++    // (games, browsers: 1-2.5 GiB that comes and goes) must still fit, or the driver spills VRAM into RAM and
++    // generation falls from ~42 to ~5 tokens/s (28.10)
++    int32_t k_use = k;
++    {
++        size_t free = 0;
++        size_t total = 0;
++        ggml_backend_dev_memory(ggml_backend_get_device(gpu), &free, &total);
++        // on Windows (WDDM) CUDA's free memory ignores the other programs (a game's 2 GiB, 28.10): the launcher passes
++        // nvidia-smi's free memory measured before the brain started, and what this process took since is subtracted
++        if (const char * f = getenv("NEIRA_HOT_FREE_MIB"); f != nullptr && atoll(f) > 0) {
++            const size_t before = (size_t) atoll(f)*1024*1024;
++            const size_t ours   = total > free ? total - free : 0;
++            const size_t left   = before > ours ? before - ours : 0;
++            LLAMA_LOG_INFO("%s: CUDA says %.0f MiB free, nvidia-smi before start %.0f MiB - ours %.0f MiB = %.0f MiB\n",
++                __func__, free/1048576.0, before/1048576.0, ours/1048576.0, left/1048576.0);
++            free = std::min(free, left);
++        }
++        const char * r = getenv("NEIRA_HOT_RESERVE_MIB");
++        // 2600: ~1 GiB of compute buffers made after the pool (-ub 2048 + the MTP context) + ~1.5 GiB for the
++        // programs that grow later; 1600 was too little with a game open (0.5 tokens/s, 28.10)
++        const size_t reserve = (size_t) (r ? atoll(r) : 2600)*1024*1024;
++        size_t per_k = 0; // one more hot expert in every layer
++        for (size_t il = 0; il < n_layer; ++il) {
++            const llama_layer & L = model.layers[il];
++            if (L.ffn_up_exps && L.ffn_gate_exps && L.ffn_down_exps) {
++                per_k += L.ffn_up_exps->nb[2] + L.ffn_gate_exps->nb[2] + L.ffn_down_exps->nb[2];
++            }
++        }
++        const size_t fit = free > reserve && per_k > 0 ? (free - reserve)/per_k : 0;
++        k_use = (int32_t) std::min<size_t>((size_t) k, fit > 2 ? fit - 2 : 0); // 2 slots: the zero expert, the MMQ pad
++        LLAMA_LOG_INFO("%s: free VRAM %.0f MiB, reserve %.0f MiB -> %d of %d hot experts per layer\n", __func__,
++            free/1048576.0, reserve/1048576.0, k_use, k);
++        if (k_use < 4) {
++            LLAMA_LOG_WARN("%s: not enough free VRAM, hot experts are off\n", __func__);
++            layers.clear();
++            return;
++        }
++    }
++
++    auto init_ctx = [](size_t n_tensors) {
++        ggml_init_params params = {
++            /*.mem_size   =*/ n_tensors*ggml_tensor_overhead(),
++            /*.mem_buffer =*/ nullptr,
++            /*.no_alloc   =*/ true,
++        };
++        ggml_context_ptr res(ggml_init(params));
++        if (!res) {
++            throw std::runtime_error("NEIRA_HOT_EXPERTS: context");
++        }
++        return res;
++    };
++    ctx_dev  = init_ctx(n_layer*8);
++    ctx_host = init_ctx(n_layer);
++
++    std::vector<std::vector<int32_t>> hot(n_layer);
++    std::vector<int32_t> stand_in(n_layer, -1);
++    size_t n_hot = 0;
++    for (size_t il = 0; il < n_layer; ++il) {
++        const llama_layer & L = model.layers[il];
++        if (L.ffn_gate_up_exps != nullptr || !neira_hot_host_weight(L.ffn_up_exps) ||
++            !neira_hot_host_weight(L.ffn_gate_exps) || !neira_hot_host_weight(L.ffn_down_exps)) {
++            continue;
++        }
++        std::vector<bool> seen(n_expert, false);
++        for (int32_t j = 0; j < k_use; ++j) {
++            const int32_t e = pool[il*(k + 1) + j];
++            if (e >= 0 && e < n_expert && !seen[e]) {
++                seen[e] = true;
++                hot[il].push_back(e);
++            }
++        }
++        const int32_t s = pool[il*(k + 1) + k];
++        stand_in[il] = s >= 0 && s < n_expert && !seen[s] ? s : -1;
++        for (int32_t e = 0; stand_in[il] < 0 && e < n_expert; ++e) {
++            if (!seen[e]) {
++                stand_in[il] = e;
++            }
++        }
++        if (hot[il].empty() || stand_in[il] < 0) {
++            hot[il].clear();
++            continue;
++        }
++
++        layer & l = layers[il];
++        const int64_t n_slots = (int64_t) hot[il].size();
++        // one zero expert at slot n_slots for the cold experts, one more slot because CUDA MMQ can read past the last
++        auto bank = [&](const ggml_tensor * w, const char * name) {
++            ggml_tensor * b = ggml_new_tensor_3d(ctx_dev.get(), w->type, w->ne[0], w->ne[1], n_slots + 2);
++            GGML_ASSERT(b->nb[2] == w->nb[2]);
++            ggml_format_name(b, "neira_hot.%zu.%s", il, name);
++            ggml_tensor * v = ggml_view_3d(ctx_dev.get(), b, b->ne[0], b->ne[1], n_slots + 1, b->nb[1], b->nb[2], 0);
++            ggml_format_name(v, "neira_hot.%zu.%s.v", il, name);
++            return v;
++        };
++        l.up   = bank(L.ffn_up_exps,   "up");
++        l.gate = bank(L.ffn_gate_exps, "gate");
++        l.down = bank(L.ffn_down_exps, "down");
++        l.hot_map = ggml_new_tensor_2d(ctx_dev.get(), GGML_TYPE_I32, 1, n_expert);
++        l.cold_w  = ggml_new_tensor_2d(ctx_dev.get(), GGML_TYPE_F32, 1, n_expert);
++        l.cold_map = ggml_new_tensor_2d(ctx_host.get(), GGML_TYPE_I32, 1, n_expert);
++        ggml_format_name(l.hot_map,  "neira_hot.hot_map-%zu",  il);
++        ggml_format_name(l.cold_w,   "neira_hot.cold_w-%zu",   il);
++        ggml_format_name(l.cold_map, "neira_hot.cold_map-%zu", il);
++        l.on = true;
++        n_hot += hot[il].size();
++    }
++    if (n_hot == 0) {
++        LLAMA_LOG_WARN("%s: no layer with host experts, hot experts are off\n", __func__);
++        layers.clear();
++        return;
++    }
++
++    buf_dev.reset(ggml_backend_alloc_ctx_tensors_from_buft(ctx_dev.get(), gpu_buft));
++    buf_host.reset(ggml_backend_alloc_ctx_tensors_from_buft(ctx_host.get(), ggml_backend_cpu_buffer_type()));
++    if (!buf_dev || !buf_host) {
++        throw std::runtime_error("NEIRA_HOT_EXPERTS: cannot allocate the banks");
++    }
++    ggml_backend_buffer_clear(buf_dev.get(), 0); // the zero expert
++    // as weights: the ops that read the banks run on the GPU, the cold map lookup on the CPU
++    ggml_backend_buffer_set_usage(buf_dev.get(),  GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
++    ggml_backend_buffer_set_usage(buf_host.get(), GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
++
++    for (size_t il = 0; il < n_layer; ++il) {
++        layer & l = layers[il];
++        if (!l.on) {
++            continue;
++        }
++        const int32_t n_slots = (int32_t) hot[il].size();
++        std::vector<int32_t> hot_map(n_expert, n_slots);
++        std::vector<int32_t> cold_map(n_expert);
++        std::vector<float>   cold_w(n_expert, 1.0f);
++        for (int64_t e = 0; e < n_expert; ++e) {
++            cold_map[e] = (int32_t) e;
++        }
++        for (int32_t j = 0; j < n_slots; ++j) {
++            const int32_t e = hot[il][j];
++            hot_map[e]  = j;
++            cold_map[e] = -1; // skipped by the CPU mul_mat_id (its row is zero there)
++            cold_w[e]   = 0.0f;
++        }
++        ggml_backend_tensor_set(l.hot_map, hot_map.data(), 0, ggml_nbytes(l.hot_map));
++        ggml_backend_tensor_set(l.cold_w,  cold_w.data(),  0, ggml_nbytes(l.cold_w));
++        ggml_backend_tensor_set(l.cold_map, cold_map.data(), 0, ggml_nbytes(l.cold_map));
++    }
++    // the expert weights are copied at the first decode (fill): when the context is made, the host experts may not
++    // have their data yet (data == NULL here, 28.10)
++    mdl = &model;
++    hot_ids = std::move(hot);
++
++    LLAMA_LOG_INFO("%s: %zu hot experts in %zu layers, %.2f MiB of VRAM (%s)\n", __func__, n_hot, n_layer,
++        ggml_backend_buffer_get_size(buf_dev.get())/1024.0/1024.0, path.c_str());
++}
++
++std::shared_ptr<llama_neira_hot> llama_neira_hot::shared(const llama_model & model, const std::vector<ggml_backend_t> & backends,
++                                                         const std::vector<ggml_backend_buffer_type_t> & bufts, const std::string & path) {
++    static std::mutex mtx;
++    static std::map<const llama_model *, std::weak_ptr<llama_neira_hot>> pools;
++    std::lock_guard<std::mutex> lock(mtx);
++    if (auto p = pools[&model].lock()) {
++        return p;
++    }
++    auto p = std::make_shared<llama_neira_hot>(model, backends, bufts, path);
++    pools[&model] = p;
++    return p;
++}
++
++void llama_neira_hot::fill() {
++    if (filled || mdl == nullptr) {
++        return;
++    }
++    std::vector<uint8_t> tmp;
++    size_t n = 0;
++    for (size_t il = 0; il < hot_ids.size(); ++il) {
++        const layer & l = layers[il];
++        if (!l.on) {
++            continue;
++        }
++        const llama_layer & L = mdl->layers[il];
++        for (size_t j = 0; j < hot_ids[il].size(); ++j) {
++            const size_t e = (size_t) hot_ids[il][j];
++            for (auto [w, b] : { std::pair{ L.ffn_up_exps, l.up }, { L.ffn_gate_exps, l.gate }, { L.ffn_down_exps, l.down } }) {
++                const size_t sz = w->nb[2];
++                if (w->data != nullptr) {
++                    ggml_backend_tensor_set(b, (const uint8_t *) w->data + e*sz, j*sz, sz);
++                } else {
++                    tmp.resize(sz);
++                    ggml_backend_tensor_get(w, tmp.data(), e*sz, sz);
++                    ggml_backend_tensor_set(b, tmp.data(), j*sz, sz);
++                }
++            }
++            n++;
++        }
++    }
++    filled = true;
++    LLAMA_LOG_INFO("%s: %zu hot experts copied to VRAM\n", __func__, n);
++}
+diff --git a/src/llama-neira-hot.h b/src/llama-neira-hot.h
+new file mode 100644
+index 0000000..dfe722a
+--- /dev/null
++++ b/src/llama-neira-hot.h
+@@ -0,0 +1,60 @@
++#pragma once
++
++// Neira hot experts (28.10): the mixed CPU/GPU split of the MoE layers.
++// The experts stay in host memory; the most used ones (by the expert map) are also copied once into VRAM banks.
++// In generation the selected experts are split: the hot ones are computed on the GPU from the banks, the cold ones
++// on the CPU from host memory, and the two halves are added. Nothing is uploaded per token (unlike the MoE cache).
++// Enabled by NEIRA_HOT_EXPERTS=<file>: int32 n_layer, int32 k, then n_layer*k int32 expert ids (-1 = none).
++
++#include "ggml-backend.h"
++#include "ggml-cpp.h"
++
++#include <cstdint>
++#include <memory>
++#include <string>
++#include <vector>
++
++struct llama_model;
++
++class llama_neira_hot {
++public:
++    struct layer {
++        bool on = false;
++        ggml_tensor * up   = nullptr; // VRAM banks, k hot experts + 1 zero expert (slot k)
++        ggml_tensor * gate = nullptr;
++        ggml_tensor * down = nullptr;
++        ggml_tensor * hot_map  = nullptr; // I32 [1, n_expert] VRAM: expert -> its slot, or k (the zero expert)
++        ggml_tensor * cold_map = nullptr; // I32 [1, n_expert] host: expert -> itself, or a stand-in cold expert
++        ggml_tensor * cold_w   = nullptr; // F32 [1, n_expert] VRAM: 1 for cold experts, 0 for hot
++    };
++
++    llama_neira_hot(const llama_model & model, const std::vector<ggml_backend_t> & backends,
++                    const std::vector<ggml_backend_buffer_type_t> & bufts, const std::string & path);
++
++    // one pool per model: the MTP draft context makes its own llama_context, and two copies of the banks would
++    // take the VRAM twice (28.10: +1.4 GiB for a 0.6 GiB pool)
++    static std::shared_ptr<llama_neira_hot> shared(const llama_model & model, const std::vector<ggml_backend_t> & backends,
++                                                   const std::vector<ggml_backend_buffer_type_t> & bufts, const std::string & path);
++
++    const layer * get(int32_t il) const {
++        return il >= 0 && il < (int32_t) layers.size() && layers[il].on ? &layers[il] : nullptr;
++    }
++
++    // copy the hot experts into the banks once, at the first decode (the host experts have their data by then)
++    void fill();
++
++    // generation only: large batches use most experts and are better served by the usual path (op offload)
++    // up to 8: CUDA takes the mmvq path for mul_mat_id; 9-16 token batches (MMQ) crashed with an illegal memory access
++    // on the banks (28.10, a prompt continued from the cache); they are rare and go the usual way
++    static constexpr int64_t max_tokens = 8;
++
++private:
++    std::vector<layer> layers;
++    const llama_model * mdl = nullptr;
++    std::vector<std::vector<int32_t>> hot_ids;
++    bool filled = false;
++    ggml_context_ptr ctx_dev;
++    ggml_context_ptr ctx_host;
++    ggml_backend_buffer_ptr buf_dev;
++    ggml_backend_buffer_ptr buf_host;
++};
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index 60c5633..1df7bff 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -19,6 +19,9 @@
+ #include "mtmd-helper.h"
+ 
+ #include <algorithm>
++#include <cmath>
++#include <fstream>
++#include <sstream>
+ #include <cstddef>
+ #include <cinttypes>
+ #include <exception>
+@@ -992,6 +995,36 @@ private:
+ 
+     llama_context * ctx_tgt = nullptr;
+ 
++    // neira: per-request control vector (loaded once, applied with the request's factor)
++    common_control_vector_data cvec_data = { -1, {} };
++    float cvec_cur = 0.0f;
++
++    // neira: the doubt sensor - a linear probe on one layer's residual stream at the last evaluated token
++    std::vector<float> probe_w;
++    float probe_b = 0.0f;
++    std::string probe_name;
++    bool probe_active = false;
++    float probe_score = -1.0f;
++
++    static bool probe_cb(struct ggml_tensor * t, bool ask, void * user_data) {
++        auto * self = (server_context_impl *) user_data;
++        if (ask) {
++            return self->probe_active && t->type == GGML_TYPE_F32 && self->probe_name == t->name;
++        }
++        const int64_t n_embd = t->ne[0];
++        if (n_embd != (int64_t) self->probe_w.size() || t->ne[1] < 1) {
++            return true;
++        }
++        std::vector<float> h(n_embd);
++        ggml_backend_tensor_get(t, h.data(), (t->ne[1] - 1) * t->nb[1], n_embd * sizeof(float));
++        double z = self->probe_b;
++        for (int64_t i = 0; i < n_embd; ++i) {
++            z += (double) self->probe_w[i] * h[i];
++        }
++        self->probe_score = (float) (1.0 / (1.0 + std::exp(-z)));
++        return true;
++    }
++
+     server_batch batch;
+ 
+     llama_model   * model_dft = nullptr;
+@@ -1213,6 +1246,19 @@ private:
+             params_base.load_progress_callback_user_data = &load_progress_text;
+         }
+ 
++        if (const char * probe_path = getenv("NEIRA_PROBE")) {
++            std::ifstream f(probe_path);
++            std::stringstream text;
++            text << f.rdbuf();
++            const json probe = json::parse(text.str());
++            probe_w    = probe.at("w").get<std::vector<float>>();
++            probe_b    = probe.at("b").get<float>();
++            probe_name = "l_out-" + std::to_string(probe.at("layer").get<int>());
++            params_base.cb_eval           = probe_cb;
++            params_base.cb_eval_user_data = this;
++            SRV_INF("neira: doubt sensor loaded from %s (%s, %zu weights)\n", probe_path, probe_name.c_str(), probe_w.size());
++        }
++
+         llama_init = common_init_from_params(params_base);
+ 
+         model_tgt = llama_init->model();
+@@ -1230,6 +1276,12 @@ private:
+ 
+         vocab = llama_model_get_vocab(model_tgt);
+ 
++        if (!params_base.control_vectors.empty()) {
++            cvec_data = common_control_vector_load(params_base.control_vectors);
++            llama_set_adapter_cvec(ctx_tgt, nullptr, 0, cvec_data.n_embd, 0, 0); // off until a request asks
++            SRV_INF("neira: control vector loaded (n_embd %d), off by default, per-request \"cvec\"\n", cvec_data.n_embd);
++        }
++
+         try {
+             decision.init(model_tgt);
+         } catch (const std::exception & e) {
+@@ -1780,7 +1832,9 @@ private:
+         }
+ 
+         if (ret) {
+-            update_cache = update_cache && prompt_cache;
++            // neira: a control vector switch: save the slot under the old setting, load under the new one
++            const bool cvec_change = cvec_data.n_embd > 0 && task.params.cvec != cvec_cur;
++            update_cache = (update_cache || cvec_change) && prompt_cache;
+ 
+             // cache prompts only for completion tasks
+             update_cache = update_cache && task.type == SERVER_TASK_TYPE_COMPLETION;
+@@ -1792,6 +1846,10 @@ private:
+ 
+                 ret->prompt_save(*prompt_cache);
+ 
++                if (cvec_change) {
++                    cvec_switch(task.params.cvec);
++                }
++
+                 if (!ret->prompt_load(*prompt_cache, task.tokens)) {
+                     ret->prompt_clear();
+                 }
+@@ -1850,7 +1908,38 @@ private:
+         return output;
+     }
+ 
++    // neira: apply the request's control vector factor; the slots' KV was computed under the other setting.
++    // The RAM prompt cache keeps entries of both settings, each tagged with its factor (see get_available_slot).
++    void cvec_switch(float factor) {
++        if (factor == 0.0f) {
++            llama_set_adapter_cvec(ctx_tgt, nullptr, 0, cvec_data.n_embd, 0, 0);
++        } else {
++            std::vector<float> v(cvec_data.data);
++            for (auto & x : v) {
++                x *= factor;
++            }
++            llama_set_adapter_cvec(ctx_tgt, v.data(), v.size(), cvec_data.n_embd, 1, llama_model_n_layer(model_tgt));
++        }
++        cvec_cur = factor;
++        for (auto & s : slots) {
++            s.prompt_clear();
++        }
++        if (prompt_cache) {
++            prompt_cache->tag = cvec_cur;
++        }
++        SRV_INF("neira: control vector factor %.3f\n", cvec_cur);
++    }
++
+     bool launch_slot_with_task(server_slot & slot, server_task && task) {
++        // neira: the doubt sensor reads this request's evaluations
++        probe_active = !probe_w.empty() && task.params.probe;
++        probe_score  = -1.0f;
++
++        // neira: normally switched in get_available_slot already; this covers the paths that skip it
++        if (cvec_data.n_embd > 0 && task.params.cvec != cvec_cur) {
++            cvec_switch(task.params.cvec);
++        }
++
+         // process per-request lora adapters
+         if (!task.params.lora.empty()) {
+             auto task_loras = construct_lora_list(task.params.lora);
+@@ -2261,6 +2350,10 @@ private:
+         res->n_prompt_tokens_cache = slot.stats.n_prompt_cached;
+         res->n_tokens_cached       = slot.prompt.n_tokens();
+         res->has_new_line          = slot.has_new_line;
++        if (slot.task->params.probe) {
++            res->neira_probe = probe_score;
++            probe_active     = false;
++        }
+         res->stopping_word         = slot.stopping_word;
+         res->stop                  = slot.stop;
+         res->post_sampling_probs   = slot.task->params.post_sampling_probs;
+diff --git a/tools/server/server-schema.cpp b/tools/server/server-schema.cpp
+index 54e126a..f4a3052 100644
+--- a/tools/server/server-schema.cpp
++++ b/tools/server/server-schema.cpp
+@@ -236,6 +236,18 @@ std::vector<std::unique_ptr<field>> make_llama_cmpl_schema(const common_params &
+             ctx.params.lora = parse_lora_request(lora);
+         }));
+ 
++    add((new field_json("probe"))
++        ->set_desc("neira: return the doubt sensor's reading (needs NEIRA_PROBE at start)")
++        ->set_handler([&](field_eval_context & ctx, const json & data) {
++            ctx.params.probe = data.at("probe").get<bool>();
++        }));
++
++    add((new field_json("cvec"))
++        ->set_desc("neira: factor for the control vector loaded at startup (0 = off, the default)")
++        ->set_handler([&](field_eval_context & ctx, const json & data) {
++            ctx.params.cvec = data.at("cvec").get<float>();
++        }));
++
+     // sequence breakers for DRY
+     // Currently, this is not compatible with TextGen WebUI, Koboldcpp and SillyTavern format
+     // Ref: https://github.com/oobabooga/text-generation-webui/blob/d1af7a41ade7bd3c3a463bfa640725edb818ebaf/extensions/openai/typing.py#L39
+diff --git a/tools/server/server-task.cpp b/tools/server/server-task.cpp
+index 3f30da2..ac7f6e1 100644
+--- a/tools/server/server-task.cpp
++++ b/tools/server/server-task.cpp
+@@ -351,6 +351,9 @@ json server_task_result_cmpl_final::to_json_non_oaicompat() {
+     if (!stream && !probs_output.empty()) {
+         res["completion_probabilities"] = completion_token_output::probs_vector_to_json(probs_output, post_sampling_probs);
+     }
++    if (neira_probe >= 0.0f) {
++        res["neira_probe"] = neira_probe;
++    }
+     return response_fields.empty() ? res : json_get_nested_values(response_fields, res);
+ }
+ 
+@@ -1714,6 +1717,9 @@ size_t server_prompt_cache::n_tokens() const {
+ server_prompt_cache_state * server_prompt_cache::alloc(const server_prompt & prompt, size_t state_size_tgt, size_t state_size_dft) {
+     // first check if the current state is contained fully in the cache
+     for (auto it = states.begin(); it != states.end(); ++it) {
++        if (it->tag != tag) {
++            continue;
++        }
+         const int cur_lcp_len = it->prompt.tokens.get_common_prefix(prompt.tokens);
+ 
+         if (cur_lcp_len == (int) prompt.tokens.size()) {
+@@ -1741,7 +1747,7 @@ server_prompt_cache_state * server_prompt_cache::alloc(const server_prompt & pro
+     for (auto it = states.begin(); it != states.end();) {
+         const int len = it->prompt.tokens.get_common_prefix(prompt.tokens);
+ 
+-        if (len == (int) it->prompt.tokens.size()) {
++        if (it->tag == tag && len == (int) it->prompt.tokens.size()) {
+             SRV_TRC(" - removing obsolete cached prompt with length %d\n", len);
+ 
+             it = states.erase(it);
+@@ -1788,6 +1794,7 @@ server_prompt_cache_state * server_prompt_cache::alloc(const server_prompt & pro
+             /*.main =*/ std::move(state_data_tgt),
+             /*.drft =*/ std::move(state_data_dft),
+         },
++        /*.tag    =*/ tag,
+     });
+ 
+     return &states.back();
+@@ -1805,6 +1812,9 @@ bool server_prompt_cache::load(server_prompt & prompt, const server_tokens & tok
+ 
+     // find the most similar cached prompt, that would also preserve the most context
+     for (auto it = states.begin(); it != states.end(); ++it) {
++        if (it->tag != tag) {
++            continue;
++        }
+         const int lcp_cur = it->prompt.tokens.get_common_prefix(tokens_new);
+ 
+         const float f_keep_cur = float(lcp_cur) / it->prompt.tokens.size();
+diff --git a/tools/server/server-task.h b/tools/server/server-task.h
+index 50926ec..682fc1a 100644
+--- a/tools/server/server-task.h
++++ b/tools/server/server-task.h
+@@ -69,6 +69,8 @@ struct task_params {
+     int64_t t_max_predict_ms = -1; // if positive, limit the generation phase to this time limit
+ 
+     std::map<int, float> lora; // mapping adapter ID -> scale
++    float cvec = 0.0f; // neira: factor for the startup control vector in this request (0 = off)
++    bool probe = false; // neira: read the doubt sensor (NEIRA_PROBE) on this request
+ 
+     std::vector<std::string> antiprompt;
+     std::vector<std::string> response_fields;
+@@ -384,6 +386,8 @@ struct server_task_result_cmpl_final : server_task_result {
+ 
+     task_params generation_params;
+ 
++    float neira_probe = -1.0f; // neira: the doubt sensor's P(knows), -1 = not asked
++
+     // response formatting
+     bool               verbose  = false;
+     task_response_type res_type = TASK_RESPONSE_TYPE_NONE;
+@@ -648,6 +652,7 @@ struct server_prompt_data {
+ struct server_prompt_cache_state {
+     server_prompt prompt;
+     server_prompt_data data;
++    float tag = 0.0f; // neira: the control vector factor the state was computed under
+ 
+     size_t size() const {
+         size_t res = data.size();
+@@ -668,6 +673,9 @@ struct server_prompt_cache {
+ 
+     std::list<server_prompt_cache_state> states;
+ 
++    // neira: the current control vector factor; alloc tags new states with it, load only takes states with it
++    float tag = 0.0f;
++
+     // in bytes, 0 = no limit
+     size_t limit_size = 0;
+ 
