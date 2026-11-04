@@ -10,6 +10,57 @@
 #include <cstdlib>
 #include <stdexcept>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <dxgi1_4.h>
+#endif
+
+// hotfix 04.11: the dedicated VRAM held by THIS process by the Windows video memory manager (the same number as the
+// "\GPU Process Memory(pid_*)\Dedicated Usage" counter): our CUDA context, weights and caches, not the voice's.
+// CUDA's total - free cannot be used for that: on WDDM it also counts the other CUDA processes (the voice, 04.11:
+// "ours 6201 MiB" for a brain of ~2.5 GiB), and they are already subtracted in nvidia-smi's number before the start.
+// 0 if unknown (not Windows, or DXGI fails).
+static size_t neira_hot_own_vram() {
+#ifdef _WIN32
+    HMODULE dll = LoadLibraryA("dxgi.dll");
+    if (dll == nullptr) {
+        return 0;
+    }
+    using create_t = HRESULT (WINAPI *)(REFIID, void **);
+    auto create = (create_t) GetProcAddress(dll, "CreateDXGIFactory1");
+    IDXGIFactory1 * factory = nullptr;
+    size_t usage = 0;
+    SIZE_T best = 0; // the card with the most dedicated VRAM (one card here, RTX 3060 Ti)
+    if (create != nullptr && SUCCEEDED(create(__uuidof(IDXGIFactory1), (void **) &factory))) {
+        IDXGIAdapter1 * a = nullptr;
+        for (UINT i = 0; factory->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; ++i) {
+            DXGI_ADAPTER_DESC1 d;
+            IDXGIAdapter3 * a3 = nullptr;
+            if (SUCCEEDED(a->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) && d.DedicatedVideoMemory > best &&
+                SUCCEEDED(a->QueryInterface(__uuidof(IDXGIAdapter3), (void **) &a3))) {
+                DXGI_QUERY_VIDEO_MEMORY_INFO info = {};
+                if (SUCCEEDED(a3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info))) {
+                    best  = d.DedicatedVideoMemory;
+                    usage = (size_t) info.CurrentUsage;
+                }
+                a3->Release();
+            }
+            a->Release();
+        }
+        factory->Release();
+    }
+    return usage;
+#else
+    return 0;
+#endif
+}
+
 static bool neira_hot_host_weight(const ggml_tensor * t) {
     return t != nullptr && t->buffer != nullptr &&
         ggml_backend_buffer_get_usage(t->buffer) == GGML_BACKEND_BUFFER_USAGE_WEIGHTS &&
@@ -62,10 +113,22 @@ llama_neira_hot::llama_neira_hot(const llama_model & model, const std::vector<gg
         // nvidia-smi's free memory measured before the brain started, and what this process took since is subtracted
         if (const char * f = getenv("NEIRA_HOT_FREE_MIB"); f != nullptr && atoll(f) > 0) {
             const size_t before = (size_t) atoll(f)*1024*1024;
-            const size_t ours   = total > free ? total - free : 0;
+            // hotfix 04.11: "ours" is this process only (was CUDA's total - free, which also held the voice: the voice
+            // was subtracted twice and with it the pool was always off). Windows' count of our VRAM; if it is not
+            // known or smaller, the brain's own weights on the card (a lower bound)
+            size_t own_model = 0;
+            for (const auto & [buft, size] : model.memory_breakdown()) {
+                if (buft == gpu_buft) {
+                    own_model += size;
+                }
+            }
+            const size_t own_os = neira_hot_own_vram();
+            const size_t ours   = std::max(own_os, own_model);
             const size_t left   = before > ours ? before - ours : 0;
-            LLAMA_LOG_INFO("%s: CUDA says %.0f MiB free, nvidia-smi before start %.0f MiB - ours %.0f MiB = %.0f MiB\n",
-                __func__, free/1048576.0, before/1048576.0, ours/1048576.0, left/1048576.0);
+            LLAMA_LOG_WARN("%s: CUDA says %.0f MiB free (total - free %.0f MiB, other CUDA programs included), "
+                "nvidia-smi before start %.0f MiB - ours %.0f MiB (Windows: this process %.0f MiB, weights on the card %.0f MiB) = %.0f MiB\n",
+                __func__, free/1048576.0, (total > free ? total - free : 0)/1048576.0, before/1048576.0, ours/1048576.0,
+                own_os/1048576.0, own_model/1048576.0, left/1048576.0);
             free = std::min(free, left);
         }
         const char * r = getenv("NEIRA_HOT_RESERVE_MIB");
@@ -81,7 +144,8 @@ llama_neira_hot::llama_neira_hot(const llama_model & model, const std::vector<gg
         }
         const size_t fit = free > reserve && per_k > 0 ? (free - reserve)/per_k : 0;
         k_use = (int32_t) std::min<size_t>((size_t) k, fit > 2 ? fit - 2 : 0); // 2 slots: the zero expert, the MMQ pad
-        LLAMA_LOG_INFO("%s: free VRAM %.0f MiB, reserve %.0f MiB -> %d of %d hot experts per layer\n", __func__,
+        // WARN, not INFO: the library's INFO lines are hidden at the server's default verbosity, this one must be seen
+        LLAMA_LOG_WARN("%s: free VRAM %.0f MiB, reserve %.0f MiB -> %d of %d hot experts per layer\n", __func__,
             free/1048576.0, reserve/1048576.0, k_use, k);
         if (k_use < 4) {
             LLAMA_LOG_WARN("%s: not enough free VRAM, hot experts are off\n", __func__);

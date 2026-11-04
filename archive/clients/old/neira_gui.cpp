@@ -11,6 +11,7 @@
 #include <ws2tcpip.h>
 
 #include <string>
+#include <cwctype>
 #include <vector>
 #include <sstream>
 #include <cstdio>
@@ -158,6 +159,24 @@ struct ChatState {
                    L"не другие языки): без вступлений, без эмоций, без пояснений, "
                    L"без дублирования задания.";
         }
+        // общая текстовая персона всех чат-клиентов (03.11), запасная строка — если файла нет
+        static const std::wstring persona = [] {
+            std::wstring w;
+            HANDLE h = CreateFileW(L"D:\\AI\\neira-tools\\neira_persona.txt", GENERIC_READ, FILE_SHARE_READ,
+                                   nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (h == INVALID_HANDLE_VALUE) return w;
+            std::string s(GetFileSize(h, nullptr), '\0');
+            DWORD rd = 0;
+            if (!s.empty()) ReadFile(h, &s[0], (DWORD)s.size(), &rd, nullptr);
+            CloseHandle(h);
+            s.resize(rd);
+            int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
+            w.resize(n);
+            if (n) MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], n);
+            while (!w.empty() && iswspace(w.back())) w.pop_back();
+            return w;
+        }();
+        if (!persona.empty()) return persona;
         return L"Ты — Нейра, ИИ-девушка, которая живёт в компьютере собеседника. "
                L"Отвечаешь по-русски, живо, но по делу.";
     }

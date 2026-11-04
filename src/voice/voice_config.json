@@ -46,5 +46,5 @@
   "colleague_lora": "D:/AI/qwentts/colleague_k5_on_k7.safetensors",
   "int8": true,
   "first_tries": 1,
-  "stress_service_off": "http://127.0.0.1:8093/mark"
+  "stress_service": "http://127.0.0.1:8093/mark"
 }

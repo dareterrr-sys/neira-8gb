@@ -19,6 +19,13 @@ echo   Neira - chat mode
 echo ============================================
 echo.
 
+rem The old brain Qwen3-VL (alias qwen3-vl, -n 1536) must not hold 8080, else it is reused below (03.11): stop it
+curl -s http://127.0.0.1:8080/v1/models | find /I "qwen3-vl" >nul && (
+  echo The old brain Qwen3-VL holds port 8080 - stopping it...
+  for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:"127.0.0.1:8080 " ^| findstr LISTENING') do taskkill /PID %%p /F >nul
+  timeout /t 3 /nobreak >nul
+)
+
 rem 1. Start the brain (llama-server) in its own minimized window if it is not running yet
 tasklist /FI "IMAGENAME eq llama-server.exe" | find /I "llama-server.exe" >nul || start "Neira brain" /MIN cmd /c "%BRAIN% > D:\AI\llama-neira-hot\brain_chat.log 2>&1"
 

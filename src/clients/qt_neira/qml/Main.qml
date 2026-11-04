@@ -23,7 +23,7 @@ Window {
     // ============================================================
     // МАСШТАБ: геометрия растёт быстрее шрифтов
     // ============================================================
-    readonly property real dp: Math.max(1.0, Math.min(1.25, width / 2048))
+    readonly property real dp: width >= 2300 ? 1.25 : (width >= 1900 ? 1.08 : 1.0)
     readonly property real fp: 1.0 + (dp - 1.0) * 0.6
     readonly property real pen: dp >= 1.2 ? 1.2 : 1.0
 
@@ -51,7 +51,7 @@ Window {
     readonly property string fSans: "Segoe UI"
     readonly property string fMono: "Cascadia Code"
 
-    readonly property string artSource: "file:///D:/AI/neira-tools/qt_neira/bg2.png"
+    readonly property string artSource: "file:///D:/AI/neira-tools/qt_neira/art.png"
     readonly property string avatarSource: "file:///D:/AI/neira-tools/qt_neira/avatar-round.png"
     readonly property rect avatarCrop: Qt.rect(1900, 210, 380, 380)
 
@@ -158,7 +158,7 @@ Window {
         messages.clear()
         messages.append({ role: "assistant", text: "Привет! Я рядом. Можем вернуться к дизайну чата — или начать с чистого листа, как тебе удобнее.", time: "14:52", think: false })
         messages.append({ role: "user", text: "Помоги переделать экран чата. На широком мониторе справа пусто, а текст теряется на фоне.", time: "14:57", think: false })
-        messages.append({ role: "assistant", text: "Тут две разные проблемы, и лечатся они по-разному.\n\n**Пустота справа** — это не про ширину, а про отсутствие второго слоя.\n\n1. Арт получает свою сцену.\n2. Диалог садится на плотную поверхность.\n3. Параметры уходят в панель.\n\nТак экран заполняется смыслом, а не декором.", time: "14:58", think: true })
+        messages.append({ role: "assistant", text: "Тут две разные проблемы, и лечатся они по-разному.\n\n**Пустота справа** — это не про ширину, а про отсутствие второго слоя. У чата есть что показать рядом: присутствие, параметры, голос.\n\n**Текст «теряется»**, потому что панели полупрозрачные и арт просвечивает прямо под буквами.\n\n1. Арт получает свою сцену — он больше не служит фоном для текста.\n2. Диалог садится на плотную поверхность и держит контраст.\n3. Параметры уходят в панель, которая открывается по запросу.\n\nТак экран заполняется смыслом, а не декором. Оставляем?", time: "14:58", think: true })
     }
 
     function setDemoState(st) {
@@ -199,6 +199,12 @@ Window {
                 .replace(/>/g, "&gt;").replace(/"/g, "&quot;")
     }
 
+    // размеры чата: в демо это фиксированные px на >=2300 и CSS px ниже
+    function chatPx(atWide, cssBase) {
+        // на >=2300 демо фиксирует физические px, ниже — CSS px с общим zoom
+        return width >= 2300 ? atWide : cssBase * dp
+    }
+
     function mdInline(raw) {
         var s = escHtml(raw)
         s = s.replace(/`([^`]+)`/g,
@@ -211,6 +217,51 @@ Window {
         s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g,
             '<a href="$2" style="color:#7FB2F0;">$1</a>')
         return s
+    }
+
+    function parseBlocks(md) {
+        var lines = String(md).split("\n")
+        var out = []
+        var i = 0
+        while (i < lines.length) {
+            var line = lines[i]
+            if (/^`/.test(line)) {
+                var buf = []
+                ++i
+                while (i < lines.length && !/^`/.test(lines[i])) { buf.push(lines[i]); ++i }
+                ++i
+                if (buf.length) out.push({ kind: "code", text: buf.join("\n") })
+                continue
+            }
+            var h = line.match(/^(#{1,4})\s+(.*)$/)
+            if (h) {
+                out.push({ kind: "h", level: h[1].length, text: h[2] })
+                ++i
+                continue
+            }
+            if (/^\s*[-*+]\s+/.test(line)) {
+                var items = []
+                while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) {
+                    items.push(lines[i].replace(/^\s*[-*+]\s+/, ""))
+                    ++i
+                }
+                out.push({ kind: "ul", items: items })
+                continue
+            }
+            if (/^\s*\d+\.\s+/.test(line)) {
+                var oitems = []
+                while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+                    oitems.push(lines[i].replace(/^\s*\d+\.\s+/, ""))
+                    ++i
+                }
+                out.push({ kind: "ol", items: oitems })
+                continue
+            }
+            if (!line.trim()) { ++i; continue }
+            out.push({ kind: "p", text: line })
+            ++i
+        }
+        return out
     }
 
     function codeBlockHtml(code) {
@@ -261,7 +312,7 @@ Window {
             }
 
             if (/^\s*\d+\.\s+/.test(line)) {
-                html += '<ol style="margin-top:2px; margin-bottom:2px;">'
+                html += '<ol style="margin-top:4px; margin-bottom:2px;">'
                 while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
                     html += '<li>' + mdInline(lines[i].replace(/^\s*\d+\.\s+/, "")) + '</li>'
                     ++i
@@ -383,11 +434,31 @@ Window {
 
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: 12 * root.dp
+            anchors.leftMargin: Math.round(12 * root.dp)
             anchors.rightMargin: 0
-            spacing: 10 * root.dp
+            spacing: 0
+
+            Item {
+                Layout.preferredWidth: 26 * root.dp
+                Layout.preferredHeight: 26 * root.dp
+
+                IconImage {
+                    anchors.centerIn: parent
+                    name: "panel-left"
+                    iconSize: 14 * root.dp
+                    tint: railToggleArea.containsMouse ? root.cText : "#7E8FA6"
+                }
+                MouseArea {
+                    id: railToggleArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.railOn = !root.railOn
+                }
+            }
 
             Rectangle {
+                Layout.leftMargin: 10 * root.dp
                 Layout.preferredWidth: 18 * root.dp
                 Layout.preferredHeight: 18 * root.dp
                 radius: 5 * root.dp
@@ -397,29 +468,35 @@ Window {
                     anchors.fill: parent
                     source: root.avatarSource
                     fillMode: Image.PreserveAspectCrop
+                    mipmap: true
                     asynchronous: true
                 }
             }
 
             Text {
+                Layout.leftMargin: 10 * root.dp
                 text: "НЕЙРА"
                 color: "#DBE7F8"
                 font.family: root.fMono
-                font.pixelSize: Math.round(10 * root.fp)
-                font.letterSpacing: 2.6
+                font.pointSize: 10 * root.dp * 0.75
+                font.hintingPreference: Font.PreferNoHinting
+                font.letterSpacing: 3.4 * root.dp
             }
             Text {
+                Layout.leftMargin: 8 * root.dp
                 text: "/"
                 color: root.cText4
                 font.family: root.fMono
-                font.pixelSize: Math.round(9 * root.fp)
+                font.pointSize: 9 * root.dp * 0.75
+                font.hintingPreference: Font.PreferNoHinting
             }
             Text {
                 text: root.chatTitle.toUpperCase()
                 color: root.cText4
                 font.family: root.fMono
-                font.pixelSize: Math.round(9 * root.fp)
-                font.letterSpacing: 1.4
+                font.pointSize: 9 * root.dp * 0.75
+                font.hintingPreference: Font.PreferNoHinting
+                font.letterSpacing: 1.44 * root.dp
             }
 
             Item { Layout.fillWidth: true }
@@ -427,8 +504,8 @@ Window {
             // DEMO-чип (как в демо, потом уберём)
             Rectangle {
                 id: demoChip
-                Layout.preferredWidth: 62 * root.dp
-                Layout.preferredHeight: 21 * root.dp
+                Layout.preferredWidth: 58 * root.dp
+                Layout.preferredHeight: 20 * root.dp
                 Layout.rightMargin: 10 * root.dp
                 radius: 4 * root.dp
                 color: Qt.rgba(0.55, 0.70, 0.90, 0.05)
@@ -449,7 +526,8 @@ Window {
                         text: "DEMO"
                         color: "#8FA6C4"
                         font.family: root.fMono
-                        font.pixelSize: Math.round(7.5 * root.fp)
+                        font.pointSize: 7.5 * root.dp * 0.75
+                        font.hintingPreference: Font.PreferNoHinting
                         font.letterSpacing: 1.4
                     }
                 }
@@ -464,14 +542,13 @@ Window {
 
             // сворачивание
             Item {
-                Layout.preferredWidth: 46 * root.dp
+                Layout.preferredWidth: 44 * root.dp
                 Layout.preferredHeight: titleBar.height
-                Text {
+                IconImage {
                     anchors.centerIn: parent
-                    text: "−"
-                    color: minArea.containsMouse ? root.cText : root.cText3
-                    font.family: root.fSans
-                    font.pixelSize: Math.round(15 * root.fp)
+                    name: "minus"
+                    iconSize: 13 * root.dp
+                    tint: minArea.containsMouse ? root.cText : root.cText3
                 }
                 MouseArea {
                     id: minArea
@@ -488,14 +565,13 @@ Window {
 
             // развернуть
             Item {
-                Layout.preferredWidth: 46 * root.dp
+                Layout.preferredWidth: 44 * root.dp
                 Layout.preferredHeight: titleBar.height
-                Text {
+                IconImage {
                     anchors.centerIn: parent
-                    text: root.visibility === Window.Maximized ? "❐" : "□"
-                    color: maxArea.containsMouse ? root.cText : root.cText3
-                    font.family: root.fSans
-                    font.pixelSize: Math.round(12 * root.fp)
+                    name: "square"
+                    iconSize: 12 * root.dp
+                    tint: maxArea.containsMouse ? root.cText : root.cText3
                 }
                 MouseArea {
                     id: maxArea
@@ -515,28 +591,17 @@ Window {
 
             // закрыть
             Item {
-                Layout.preferredWidth: 46 * root.dp
+                Layout.preferredWidth: 44 * root.dp
                 Layout.preferredHeight: titleBar.height
                 Rectangle {
                     anchors.fill: parent
                     color: winCloseArea.containsMouse ? Qt.rgba(1, 0.42, 0, 0.10) : "transparent"
                 }
-                Text {
+                IconImage {
                     anchors.centerIn: parent
-                    text: "×"
-                    color: winCloseArea.containsMouse ? "#FF6C00" : root.cText3
-                    font.family: root.fSans
-                    font.pixelSize: Math.round(16 * root.fp)
-                    layer.enabled: winCloseArea.containsMouse
-                    layer.effect: MultiEffect {
-                        shadowEnabled: true
-                        shadowColor: "#FF6C00"
-                        shadowBlur: 0.6
-                        shadowVerticalOffset: 0
-                        shadowHorizontalOffset: 0
-                        shadowScale: 1.0
-                        opacity: 0.9
-                    }
+                    name: "x"
+                    iconSize: 13 * root.dp
+                    tint: winCloseArea.containsMouse ? "#FF6C00" : root.cText3
                 }
                 MouseArea {
                     id: winCloseArea
@@ -549,6 +614,7 @@ Window {
     }
 
     RowLayout {
+        id: contentRow
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: titleBar.bottom
@@ -571,7 +637,10 @@ Window {
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 12 * root.dp
+                anchors.leftMargin: 12 * root.dp
+                anchors.rightMargin: Math.round(12 * root.dp)
+                anchors.topMargin: Math.round(14 * root.dp) - 1
+                anchors.bottomMargin: 10 * root.dp
                 spacing: 10 * root.dp
 
                 // новый разговор
@@ -581,17 +650,61 @@ Window {
                     Layout.preferredHeight: 38 * root.dp
                     radius: 9 * root.dp
                     gradient: Gradient {
-                        GradientStop { position: 0.0; color: newChatArea.containsMouse ? "#F2F7FF" : "#E4EEFF" }
+                        GradientStop { position: 0.0; color: newChatArea.containsMouse ? "#F4F8FF" : "#EAF2FF" }
                         GradientStop { position: 1.0; color: newChatArea.containsMouse ? "#D3E4FB" : "#C3D9F8" }
                     }
 
+
+                    // внешняя тень как box-shadow: 0 10px 24px -12px rgba(120,170,230,.55)
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        height: 1
+                        color: Qt.rgba(1, 1, 1, 0.7)
+                    }
+
+                    Rectangle {
+                        anchors.top: parent.bottom
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: parent.width - 24 * root.dp
+                        height: 24 * root.dp
+                        gradient: Gradient {
+                            GradientStop { position: 0.0; color: Qt.rgba(120 / 255, 170 / 255, 230 / 255, 0.10) }
+                            GradientStop { position: 1.0; color: "transparent" }
+                        }
+                    }
+
+                    Row {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 14 * root.dp
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 8 * root.dp
+                        IconImage {
+                            anchors.verticalCenter: parent.verticalCenter
+                            name: "plus"
+                            iconSize: 12 * root.dp
+                            tint: "#0b1a30"
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "НОВЫЙ РАЗГОВОР"
+                            color: "#050e1c"
+                            font.family: root.fMono
+                            font.pointSize: 9.5 * root.dp * 0.75
+                            font.hintingPreference: Font.PreferNoHinting
+                            font.letterSpacing: 1.6
+                        }
+                    }
                     Text {
-                        anchors.centerIn: parent
-                        text: "НОВЫЙ РАЗГОВОР"
-                        color: "#050e1c"
+                        anchors.right: parent.right
+                        anchors.rightMargin: 14 * root.dp
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "^N"
+                        color: "#7d90aa"
                         font.family: root.fMono
-                        font.pixelSize: Math.round(9 * root.fp)
-                        font.letterSpacing: 1.2
+                        font.pointSize: 8.5 * root.dp * 0.75
+                        font.hintingPreference: Font.PreferNoHinting
                     }
                     MouseArea {
                         id: newChatArea
@@ -615,33 +728,54 @@ Window {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 32 * root.dp
-                    radius: 8 * root.dp
-                    color: Qt.rgba(0.55, 0.70, 0.90, 0.04)
+                    radius: 9 * root.dp
+                    color: Qt.rgba(140 / 255, 180 / 255, 230 / 255, 0.035)
                     border.width: 1
                     border.color: searchField.activeFocus ? root.cLine2 : root.cLine
 
                     TextInput {
                         id: searchField
                         anchors.fill: parent
-                        anchors.leftMargin: 10 * root.dp
+                        anchors.leftMargin: 30 * root.dp
                         anchors.rightMargin: 10 * root.dp
                         verticalAlignment: TextInput.AlignVCenter
                         color: root.cText2
                         font.family: root.fSans
-                        font.pixelSize: Math.round(11 * root.fp)
+                        font.pointSize: 12 * root.dp * 0.75
+                        font.hintingPreference: Font.PreferNoHinting
                         selectByMouse: true
                         onTextChanged: {
                             root.sessionFilter = text
                             root.refreshSessions()
                         }
-                        Text {
-                            anchors.verticalCenter: parent.verticalCenter
-                            visible: searchField.text === ""
-                            text: "Поиск по сессиям"
-                            color: root.cText4
-                            font.family: root.fSans
-                            font.pixelSize: Math.round(11 * root.fp)
-                        }
+                    }
+                    Text {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 30 * root.dp
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: searchField.text === ""
+                        text: "Поиск по чатам"
+                        color: root.cText4
+                        font.family: root.fSans
+                        font.pointSize: 12 * root.dp * 0.75
+                        font.hintingPreference: Font.PreferNoHinting
+                    }
+                    IconImage {
+                        x: 10 * root.dp
+                        anchors.verticalCenter: parent.verticalCenter
+                        name: "search"
+                        iconSize: 12 * root.dp
+                        tint: root.cText4
+                    }
+                    Text {
+                        anchors.right: parent.right
+                        anchors.rightMargin: 10 * root.dp
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "^K"
+                        color: "#5b6b82"
+                        font.family: root.fMono
+                        font.pointSize: 8.5 * root.dp * 0.75
+                        font.hintingPreference: Font.PreferNoHinting
                     }
                 }
 
@@ -652,13 +786,13 @@ Window {
                 RailChat { Layout.fillWidth: true; title: "Стихи про звёзды"; sub: "Три варианта, ночь, тишина"; time: "11:04"; active: root.activeChat === 2; onClicked: { root.activeChat = 2; root.chatTitle = "Стихи про звёзды" } }
 
                 // 02 ВЧЕРА
-                RailSection { Layout.fillWidth: true; num: "02"; title: "ВЧЕРА" }
+                RailSection { Layout.fillWidth: true; num: "02"; title: "ВЧЕРА"; Layout.topMargin: 2.8 * root.dp }
                 RailChat { Layout.fillWidth: true; title: "Настройка голоса"; sub: "Темп, тембр, паузы"; time: "21:40"; active: root.activeChat === 3; onClicked: { root.activeChat = 3; root.chatTitle = "Настройка голоса" } }
                 RailChat { Layout.fillWidth: true; title: "Промпт-инженер"; sub: "Системные инструкции"; time: "19:12"; active: root.activeChat === 4; onClicked: { root.activeChat = 4; root.chatTitle = "Промпт-инженер" } }
 
                 // 03 РАНЕЕ
-                RailSection { Layout.fillWidth: true; num: "03"; title: "РАНЕЕ" }
-                RailChat { Layout.fillWidth: true; title: "Заметки о модели"; sub: "Квантование, скорость"; time: "28.10"; active: root.activeChat === 5; onClicked: { root.activeChat = 5; root.chatTitle = "Заметки о модели" } }
+                RailSection { Layout.fillWidth: true; num: "03"; title: "РАНЕЕ"; Layout.topMargin: 2.8 * root.dp; Layout.bottomMargin: 3 * root.dp }
+                RailChat { Layout.fillWidth: true; title: "Заметки о модели"; sub: "Квантизация, скорость"; time: "28.10"; active: root.activeChat === 5; onClicked: { root.activeChat = 5; root.chatTitle = "Заметки о модели" } }
 
                 Item { Layout.fillHeight: true }
 
@@ -676,14 +810,22 @@ Window {
                     radius: 7 * root.dp
                     color: voiceRowArea.containsMouse ? Qt.rgba(0.55, 0.70, 0.90, 0.06) : "transparent"
 
+                    IconImage {
+                        x: 9 * root.dp
+                        anchors.verticalCenter: parent.verticalCenter
+                        name: "wave"
+                        iconSize: 13 * root.dp
+                        tint: root.cText3
+                    }
                     Text {
                         anchors.left: parent.left
-                        anchors.leftMargin: 9 * root.dp
+                        anchors.leftMargin: 28 * root.dp
                         anchors.verticalCenter: parent.verticalCenter
                         text: "Голос"
                         color: root.cText2
                         font.family: root.fSans
-                        font.pixelSize: Math.round(11.5 * root.fp)
+                        font.pointSize: 11.5 * root.dp * 0.75
+                        font.hintingPreference: Font.PreferNoHinting
                     }
                     Rectangle {
                         anchors.right: parent.right
@@ -700,7 +842,8 @@ Window {
                             text: "ON"
                             color: root.cOk
                             font.family: root.fMono
-                            font.pixelSize: Math.round(7 * root.fp)
+                            font.pointSize: 8 * root.dp * 0.75
+                            font.hintingPreference: Font.PreferNoHinting
                             font.letterSpacing: 0.8
                         }
                     }
@@ -717,43 +860,24 @@ Window {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 32 * root.dp
                     radius: 7 * root.dp
-                    color: saveArea.containsMouse ? Qt.rgba(0.55, 0.70, 0.90, 0.06) : "transparent"
-
-                    Text {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 9 * root.dp
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "Сохранить сессию…"
-                        color: root.cText2
-                        font.family: root.fSans
-                        font.pixelSize: Math.round(11.5 * root.fp)
-                    }
-                    MouseArea {
-                        id: saveArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            sessionName.text = ""
-                            saveDialog.open()
-                        }
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 32 * root.dp
-                    radius: 7 * root.dp
                     color: paramsArea.containsMouse ? Qt.rgba(0.55, 0.70, 0.90, 0.06) : "transparent"
 
+                    IconImage {
+                        x: 9 * root.dp
+                        anchors.verticalCenter: parent.verticalCenter
+                        name: "sliders"
+                        iconSize: 13 * root.dp
+                        tint: root.cText3
+                    }
                     Text {
                         anchors.left: parent.left
-                        anchors.leftMargin: 9 * root.dp
+                        anchors.leftMargin: 28 * root.dp
                         anchors.verticalCenter: parent.verticalCenter
                         text: "Параметры"
                         color: root.cText2
                         font.family: root.fSans
-                        font.pixelSize: Math.round(11.5 * root.fp)
+                        font.pointSize: 11.5 * root.dp * 0.75
+                        font.hintingPreference: Font.PreferNoHinting
                     }
                     MouseArea {
                         id: paramsArea
@@ -779,24 +903,38 @@ Window {
                             anchors.fill: parent
                             source: root.avatarSource
                             fillMode: Image.PreserveAspectCrop
+                            mipmap: true
                             asynchronous: true
                         }
                     }
                     Column {
                         spacing: 1
                         Text {
-                            text: "Собеседник"
+                            text: "Никита"
                             color: "#DCE0EC"
                             font.family: root.fSans
-                            font.pixelSize: Math.round(11.5 * root.fp)
+                            font.pointSize: 11.5 * root.dp * 0.75
+                            font.hintingPreference: Font.PreferNoHinting
                             font.weight: Font.DemiBold
                         }
                         Text {
-                            text: "ЛОКАЛЬНАЯ СЕССИЯ"
+                            text: "Local session"
                             color: root.cText4
                             font.family: root.fMono
-                            font.pixelSize: Math.round(7.5 * root.fp)
+                            font.pointSize: 8 * root.dp * 0.75
+                            font.hintingPreference: Font.PreferNoHinting
                             font.letterSpacing: 1
+                        }
+                    }
+                    Item { Layout.fillWidth: true }
+                    Item {
+                        Layout.preferredWidth: 16 * root.dp
+                        Layout.preferredHeight: 16 * root.dp
+                        IconImage {
+                            anchors.centerIn: parent
+                            name: "gear"
+                            iconSize: 13 * root.dp
+                            tint: root.cText4
                         }
                     }
                     Item { Layout.fillWidth: true }
@@ -844,6 +982,7 @@ Window {
                                     anchors.fill: parent
                                     source: root.avatarSource
                                     fillMode: Image.PreserveAspectCrop
+                                    mipmap: true
                                     asynchronous: true
                                 }
                             }
@@ -876,7 +1015,8 @@ Window {
                                 text: "Нейра"
                                 color: "#EDF3FC"
                                 font.family: root.fSans
-                                font.pixelSize: Math.round(13.5 * root.fp)
+                                font.pointSize: 13 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
                                 font.weight: Font.DemiBold
                             }
                             RowLayout {
@@ -894,8 +1034,9 @@ Window {
                                          : brain.connectionStatus === "failed" ? root.cBad
                                          : root.cWarn
                                     font.family: root.fMono
-                                    font.pixelSize: Math.round(8.5 * root.fp)
-                                    font.letterSpacing: 1.1
+                                    font.pointSize: 8.5 * root.dp * 0.75
+                                    font.hintingPreference: Font.PreferNoHinting
+                                    font.letterSpacing: 1.45
 
                                     SequentialAnimation on opacity {
                                         running: root.isThinking || root.isPrinting
@@ -910,8 +1051,9 @@ Window {
                                     text: "· MISTRAL 7B · ЛОКАЛЬНО"
                                     color: root.cText4
                                     font.family: root.fMono
-                                    font.pixelSize: Math.round(8.5 * root.fp)
-                                    font.letterSpacing: 1.1
+                                    font.pointSize: 8.5 * root.dp * 0.75
+                                    font.hintingPreference: Font.PreferNoHinting
+                                    font.letterSpacing: 1.45
                                 }
                             }
                         }
@@ -934,7 +1076,8 @@ Window {
                                 text: "</> КОД"
                                 color: root.cIce2
                                 font.family: root.fMono
-                                font.pixelSize: Math.round(8 * root.fp)
+                                font.pointSize: 8 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
                                 font.letterSpacing: 1
                             }
                         }
@@ -951,53 +1094,11 @@ Window {
                                 border.width: 1
                                 border.color: voiceToggle.containsMouse ? root.cLine2 : root.cLine
                             }
-                            Shape {
+                            IconImage {
                                 anchors.centerIn: parent
-                                width: 13 * root.dp
-                                height: 12 * root.dp
-                                ShapePath {
-                                    fillColor: "transparent"
-                                    strokeColor: voiceToggle.containsMouse ? root.cIce : root.cText2
-                                    strokeWidth: 1.2 * root.dp
-                                    capStyle: ShapePath.RoundCap
-                                    joinStyle: ShapePath.RoundJoin
-                                    startX: 1.2 * root.dp
-                                    startY: 4.7 * root.dp
-                                    PathLine { x: 3.7 * root.dp; y: 4.7 * root.dp }
-                                    PathLine { x: 6.7 * root.dp; y: 1.5 * root.dp }
-                                    PathLine { x: 6.7 * root.dp; y: 10.5 * root.dp }
-                                    PathLine { x: 3.7 * root.dp; y: 7.3 * root.dp }
-                                    PathLine { x: 1.2 * root.dp; y: 7.3 * root.dp }
-                                    PathLine { x: 1.2 * root.dp; y: 4.7 * root.dp }
-                                }
-                                ShapePath {
-                                    fillColor: "transparent"
-                                    strokeColor: voiceToggle.containsMouse ? root.cIce : root.cText2
-                                    strokeWidth: 1.1 * root.dp
-                                    capStyle: ShapePath.RoundCap
-                                    PathAngleArc {
-                                        centerX: 7.4 * root.dp
-                                        centerY: 6 * root.dp
-                                        radiusX: 2.2 * root.dp
-                                        radiusY: 2.2 * root.dp
-                                        startAngle: -48
-                                        sweepAngle: 96
-                                    }
-                                }
-                                ShapePath {
-                                    fillColor: "transparent"
-                                    strokeColor: voiceToggle.containsMouse ? root.cIce : root.cText2
-                                    strokeWidth: 1.1 * root.dp
-                                    capStyle: ShapePath.RoundCap
-                                    PathAngleArc {
-                                        centerX: 7.4 * root.dp
-                                        centerY: 6 * root.dp
-                                        radiusX: 4.0 * root.dp
-                                        radiusY: 4.0 * root.dp
-                                        startAngle: -48
-                                        sweepAngle: 96
-                                    }
-                                }
+                                name: "volume"
+                                iconSize: 15 * root.dp
+                                tint: voiceToggle.containsMouse ? root.cIce : root.cText2
                             }
                             MouseArea {
                                 id: voiceToggle
@@ -1019,23 +1120,11 @@ Window {
                                 border.width: 1
                                 border.color: root.stageOn ? Qt.rgba(0.55, 0.70, 0.90, 0.22) : (stageToggle.containsMouse ? root.cLine2 : root.cLine)
                             }
-                            Rectangle {
+                            IconImage {
                                 anchors.centerIn: parent
-                                width: 12 * root.dp
-                                height: 10 * root.dp
-                                radius: 2.4 * root.dp
-                                color: "transparent"
-                                border.width: 1.2 * root.dp
-                                border.color: stageToggle.containsMouse ? root.cIce : root.cText2
-
-                                Rectangle {
-                                    anchors.right: parent.right
-                                    anchors.rightMargin: 3.6 * root.dp
-                                    anchors.top: parent.top
-                                    anchors.bottom: parent.bottom
-                                    width: 1.2 * root.dp
-                                    color: stageToggle.containsMouse ? root.cIce : root.cText2
-                                }
+                                name: "panel"
+                                iconSize: 15 * root.dp
+                                tint: stageToggle.containsMouse ? root.cIce : root.cText2
                             }
                             MouseArea {
                                 id: stageToggle
@@ -1057,13 +1146,11 @@ Window {
                                 radius: 6 * root.dp
                                 color: paramsToggle.containsMouse || root.paramsOpen ? Qt.rgba(0.62, 0.76, 0.92, 0.10) : "transparent"
                             }
-                            SvgIcon {
+                            IconImage {
                                 anchors.centerIn: parent
-                                width: 12 * root.dp
-                                height: 12 * root.dp
-                                sw: 1.5
-                                color: paramsToggle.containsMouse ? root.cIce : root.cText2
-                                d: "M4 7.5 L12 7.5 M16 7.5 L20 7.5 M4 16.5 L8 16.5 M12 16.5 L20 16.5 M12.2 7.5 A1.8 1.8 0 1 0 15.8 7.5 A1.8 1.8 0 1 0 12.2 7.5 M8.2 16.5 A1.8 1.8 0 1 0 11.8 16.5 A1.8 1.8 0 1 0 8.2 16.5"
+                                name: "sliders"
+                                iconSize: 15 * root.dp
+                                tint: paramsToggle.containsMouse ? root.cIce : root.cText2
                             }
                             MouseArea {
                                 id: paramsToggle
@@ -1093,13 +1180,11 @@ Window {
                                 radius: 6 * root.dp
                                 color: moreArea.containsMouse ? Qt.rgba(0.62, 0.76, 0.92, 0.10) : "transparent"
                             }
-                            SvgIcon {
+                            IconImage {
                                 anchors.centerIn: parent
-                                width: 12 * root.dp
-                                height: 12 * root.dp
-                                filled: true
-                                color: moreArea.containsMouse ? root.cIce : root.cText2
-                                d: "M3.85 12 A1.55 1.55 0 1 0 6.95 12 A1.55 1.55 0 1 0 3.85 12 M10.45 12 A1.55 1.55 0 1 0 13.55 12 A1.55 1.55 0 1 0 10.45 12 M17.05 12 A1.55 1.55 0 1 0 20.15 12 A1.55 1.55 0 1 0 17.05 12"
+                                name: "more"
+                                iconSize: 15 * root.dp
+                                tint: moreArea.containsMouse ? root.cIce : root.cText2
                             }
                             MouseArea {
                                 id: moreArea
@@ -1119,17 +1204,18 @@ Window {
                     ListView {
                         id: view
                         anchors.fill: parent
-                        anchors.topMargin: 14 * root.dp
+                        anchors.topMargin: 4 * root.dp
                         anchors.bottomMargin: 8 * root.dp
                         anchors.leftMargin: Math.max(20 * root.dp, (parent.width - 720 * root.fp) / 2)
                         anchors.rightMargin: Math.max(20 * root.dp, (parent.width - 720 * root.fp) / 2)
                         clip: true
-                        spacing: 14 * root.dp
+                        spacing: 1 * root.dp
                         model: messages
 
-                        add: Transition {
-                            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 220 }
-                        }
+                        // Без add: Transition — пока она идёт, ListView не двигает
+                        // соседей при смене высоты делегата (текст переносится уже
+                        // после создания) и в ленте остаётся дыра. Плавное появление —
+                        // внутри делегата (fadeIn), геометрию оно не трогает.
 
                         header: Item {
                             width: view.width
@@ -1159,7 +1245,8 @@ Window {
                                     text: Qt.formatDate(new Date(), "dd.MM") + " / СЕГОДНЯ"
                                     color: root.cText4
                                     font.family: root.fMono
-                                    font.pixelSize: Math.round(8 * root.fp)
+                                    font.pointSize: 8 * root.dp * 0.75
+                                    font.hintingPreference: Font.PreferNoHinting
                                     font.letterSpacing: 1.4
                                 }
                             }
@@ -1211,10 +1298,14 @@ Window {
                         delegate: Item {
                             id: del
                             width: view.width
-                            height: bodyColumn.implicitHeight
+                            height: bodyColumn.implicitHeight + 18 * root.dp
+
+                            NumberAnimation { id: fadeIn; target: del; property: "opacity"; from: 0; to: 1; duration: 220 }
+                            Component.onCompleted: if (index === view.count - 1) fadeIn.start()
 
                             Column {
                                 id: bodyColumn
+                                y: 9 * root.dp
                                 width: parent.width
                                 spacing: 0
 
@@ -1229,7 +1320,8 @@ Window {
                                         visible: false
                                         text: model.text
                                         font.family: root.fMono
-                                        font.pixelSize: Math.round(9 * root.fp)
+                                        font.pointSize: 9 * root.fp * 0.75
+                                        font.hintingPreference: Font.PreferNoHinting
                                     }
                                     Rectangle {
                                         id: sysPill
@@ -1251,7 +1343,8 @@ Window {
                                             horizontalAlignment: Text.AlignHCenter
                                             color: "#B99A80"
                                             font.family: root.fMono
-                                            font.pixelSize: Math.round(9 * root.fp)
+                                            font.pointSize: 9 * root.fp * 0.75
+                                            font.hintingPreference: Font.PreferNoHinting
                                             font.letterSpacing: 0.6
                                         }
                                     }
@@ -1280,6 +1373,7 @@ Window {
                                                     anchors.fill: parent
                                                     source: root.avatarSource
                                                     fillMode: Image.PreserveAspectCrop
+                                                    mipmap: true
                                                     asynchronous: true
                                                 }
                                             }
@@ -1295,13 +1389,14 @@ Window {
                                                     text: "Нейра"
                                                     color: "#DCE6F3"
                                                     font.family: root.fSans
-                                                    font.pixelSize: Math.round(12 * root.fp)
+                                                    font.pointSize: 12 * root.fp * 0.75
+                                                    font.hintingPreference: Font.PreferNoHinting
                                                     font.weight: Font.DemiBold
                                                 }
                                                 Rectangle {
                                                     Layout.alignment: Qt.AlignVCenter
-                                                    width: 20 * root.dp
-                                                    height: 13 * root.dp
+                                                    Layout.preferredWidth: 20 * root.dp
+                                                    Layout.preferredHeight: 13 * root.dp
                                                     radius: 3 * root.dp
                                                     color: "transparent"
                                                     border.width: 1
@@ -1311,7 +1406,8 @@ Window {
                                                         text: "AI"
                                                         color: "#8FA6C4"
                                                         font.family: root.fMono
-                                                        font.pixelSize: Math.round(7 * root.fp)
+                                                        font.pointSize: root.chatPx(9.8, 7.5) * 0.75
+                                                        font.hintingPreference: Font.PreferNoHinting
                                                         font.letterSpacing: 0.5
                                                     }
                                                 }
@@ -1320,39 +1416,55 @@ Window {
                                                     text: model.time
                                                     color: root.cText4
                                                     font.family: root.fMono
-                                                    font.pixelSize: Math.round(8 * root.fp)
+                                font.pointSize: root.chatPx(9.8, 8.5) * 0.75
+                                                    font.hintingPreference: Font.PreferNoHinting
                                                 }
                                             }
 
                                             Rectangle {
                                                 visible: model.think === true
-                                                width: 104 * root.dp
-                                                height: 18 * root.dp
-                                                radius: 3 * root.dp
-                                                color: "transparent"
+                                                width: thinkRow.implicitWidth + 16 * root.dp
+                                                height: 23 * root.dp
+                                                radius: 4 * root.dp
+                                                color: Qt.rgba(0.55, 0.71, 0.90, 0.04)
                                                 border.width: 1
                                                 border.color: root.cLine
 
-                                                Text {
+                                                Row {
+                                                    id: thinkRow
                                                     anchors.centerIn: parent
-                                                    text: "РАЗМЫШЛЕНИЕ 2.4S"
-                                                    color: "#7086A0"
-                                                    font.family: root.fMono
-                                                    font.pixelSize: Math.round(7 * root.fp)
-                                                    font.letterSpacing: 1
+                                                    spacing: 6 * root.dp
+
+                                                    IconImage {
+                                                        anchors.verticalCenter: parent.verticalCenter
+                                                        name: "spark"
+                                                        iconSize: 11 * root.dp
+                                                        tint: root.cIce2
+                                                    }
+                                                    Text {
+                                                        anchors.verticalCenter: parent.verticalCenter
+                                                        text: "РАЗМЫШЛЕНИЕ"
+                                                        color: "#7086A0"
+                                                        font.family: root.fMono
+                                                        font.pointSize: root.chatPx(10, 8) * 0.75
+                                                        font.hintingPreference: Font.PreferNoHinting
+                                                        font.letterSpacing: 1.04
+                                                    }
+                                                    Text {
+                                                        anchors.verticalCenter: parent.verticalCenter
+                                                        text: "2.4S"
+                                                        color: "#A8BEDC"
+                                                        font.family: root.fMono
+                                                        font.pointSize: root.chatPx(10, 8) * 0.75
+                                                        font.hintingPreference: Font.PreferNoHinting
+                                                        font.letterSpacing: 1.04
+                                                    }
                                                 }
                                             }
 
-                                            Text {
+                                            MessageBody {
                                                 width: parent.width
-                                                textFormat: Text.RichText
-                                                text: root.mdToHtml(model.text)
-                                                color: root.cBody
-                                                font.family: root.fSans
-                                                font.pixelSize: Math.round(14 * root.fp)
-                                                lineHeight: 1.5
-                                                lineHeightMode: Text.ProportionalHeight
-                                                wrapMode: Text.WordWrap
+                                                source: model.text
                                             }
 
                                             RowLayout {
@@ -1363,8 +1475,8 @@ Window {
                                                 MsgAction { kind: "refresh"; onClicked: root.regenerateStub() }
                                                 MsgAction { kind: "voice"; onClicked: root.voiceStub() }
                                                 Rectangle {
-                                                    width: 1
-                                                    height: 11 * root.dp
+                                                    Layout.preferredWidth: 1
+                                                    Layout.preferredHeight: 11 * root.dp
                                                     color: root.cLine
                                                     Layout.leftMargin: 4 * root.dp
                                                     Layout.rightMargin: 4 * root.dp
@@ -1376,7 +1488,8 @@ Window {
                                                     text: model.time
                                                     color: root.cText4
                                                     font.family: root.fMono
-                                                    font.pixelSize: Math.round(7.5 * root.fp)
+                                                    font.pointSize: root.chatPx(9.8, 7.5) * 0.75
+                                                    font.hintingPreference: Font.PreferNoHinting
                                                 }
                                             }
                                         }
@@ -1387,40 +1500,52 @@ Window {
                                 Item {
                                     visible: model.role === "user"
                                     width: parent.width
-                                    height: uBubble.height + 8 * root.dp
+                                    height: uBubble.height + uTime.height + uTime.anchors.topMargin
 
                                     Text {
                                         id: uMeasure
                                         visible: false
                                         text: model.text
                                         font.family: root.fSans
-                                        font.pixelSize: Math.round(14 * root.fp)
+                                        font.pointSize: 14 * root.fp * 0.75
+                                        font.hintingPreference: Font.PreferNoHinting
                                     }
                                     Rectangle {
                                         id: uBubble
                                         anchors.right: parent.right
-                                        width: Math.min(uMeasure.implicitWidth + 28 * root.dp, Math.min(parent.width * 0.72, 552))
+                                        width: Math.min(uMeasure.implicitWidth + 28 * root.dp, Math.min(parent.width - 40 * root.dp, root.width >= 2300 ? 552 : 520))
                                         height: uText.implicitHeight + 20 * root.dp
                                         radius: 12 * root.dp
-                                        color: Qt.rgba(0.47, 0.65, 0.86, 0.13)
+                                        gradient: Gradient {
+                                            GradientStop { position: 0.0; color: Qt.rgba(0.47, 0.65, 0.86, 0.14) }
+                                            GradientStop { position: 1.0; color: Qt.rgba(0.47, 0.65, 0.86, 0.07) }
+                                        }
                                         border.width: root.pen
-                                        border.color: Qt.rgba(0.59, 0.75, 0.92, 0.22)
+                                        border.color: Qt.rgba(0.59, 0.75, 0.92, 0.20)
 
-                                        Text {
+                                        MessageBody {
                                             id: uText
                                             anchors.left: parent.left
                                             anchors.right: parent.right
                                             anchors.top: parent.top
-                                            anchors.margins: 10 * root.dp
-                                            textFormat: Text.RichText
-                                            text: root.mdToHtml(model.text)
-                                            color: "#E6EEFA"
-                                            font.family: root.fSans
-                                            font.pixelSize: Math.round(14 * root.fp)
-                                            lineHeight: 1.45
-                                            lineHeightMode: Text.ProportionalHeight
-                                            wrapMode: Text.WordWrap
+                                            anchors.leftMargin: 14 * root.dp
+                                            anchors.rightMargin: 14 * root.dp
+                                            anchors.topMargin: 10 * root.dp
+                                            source: model.text
+                                            bodyColor: "#E6EEFA"
                                         }
+                                    }
+                                    Text {
+                                        id: uTime
+                                        anchors.right: parent.right
+                                        anchors.top: uBubble.bottom
+                                        anchors.topMargin: 5 * root.dp
+                                        text: model.time
+                                        color: "#46566B"
+                                        font.family: root.fMono
+                                        font.pointSize: 8.5 * root.dp * 0.75
+                                        font.hintingPreference: Font.PreferNoHinting
+                                        font.letterSpacing: 0.5 * root.dp
                                     }
                                 }
                             }
@@ -1506,7 +1631,8 @@ Window {
                                     width: inputScroll.availableWidth
                                     color: root.cText
                                     font.family: root.fSans
-                                    font.pixelSize: Math.round(13.5 * root.fp)
+                                    font.pointSize: 13.5 * root.dp * 0.75
+                                    font.hintingPreference: Font.PreferNoHinting
                                     placeholderText: "Написать Нейре…"
                                     placeholderTextColor: root.cText4
                                     wrapMode: TextEdit.Wrap
@@ -1547,13 +1673,11 @@ Window {
                                         radius: 6 * root.dp
                                         color: attachArea.containsMouse ? Qt.rgba(0.62, 0.76, 0.92, 0.10) : "transparent"
                                     }
-                                    SvgIcon {
+                                    IconImage {
                                         anchors.centerIn: parent
-                                        width: 15 * root.dp
-                                        height: 15 * root.dp
-                                        sw: 1.4
-                                        color: attachArea.containsMouse ? root.cIce : root.cText3
-                                        d: "M21 11.2 L12.3 20 A5.7 5.7 0 0 1 4.3 12 L13 3.3 A3.8 3.8 0 0 1 18.4 8.7 L9.7 17.4 A1.9 1.9 0 0 1 7 14.7 L15 6.7"
+                                        name: "paperclip"
+                                        iconSize: 15 * root.dp
+                                        tint: attachArea.containsMouse ? root.cIce : root.cText3
                                     }
                                     MouseArea {
                                         id: attachArea
@@ -1572,44 +1696,11 @@ Window {
                                         radius: 6 * root.dp
                                         color: micArea.containsMouse ? Qt.rgba(0.62, 0.76, 0.92, 0.10) : "transparent"
                                     }
-                                    Rectangle {
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                        anchors.top: parent.top
-                                        anchors.topMargin: 5 * root.dp
-                                        width: 5.4 * root.dp
-                                        height: 8.4 * root.dp
-                                        radius: 2.7 * root.dp
-                                        color: "transparent"
-                                        border.width: 1.2 * root.dp
-                                        border.color: micArea.containsMouse ? root.cIce : root.cText3
-                                    }
-                                    Shape {
+                                    IconImage {
                                         anchors.centerIn: parent
-                                        width: 16 * root.dp
-                                        height: 16 * root.dp
-                                        ShapePath {
-                                            fillColor: "transparent"
-                                            strokeColor: micArea.containsMouse ? root.cIce : root.cText3
-                                            strokeWidth: 1.2 * root.dp
-                                            capStyle: ShapePath.RoundCap
-                                            PathAngleArc {
-                                                centerX: 8 * root.dp
-                                                centerY: 7 * root.dp
-                                                radiusX: 4.4 * root.dp
-                                                radiusY: 4.4 * root.dp
-                                                startAngle: 20
-                                                sweepAngle: 140
-                                            }
-                                        }
-                                        ShapePath {
-                                            fillColor: "transparent"
-                                            strokeColor: micArea.containsMouse ? root.cIce : root.cText3
-                                            strokeWidth: 1.2 * root.dp
-                                            capStyle: ShapePath.RoundCap
-                                            startX: 8 * root.dp
-                                            startY: 11.4 * root.dp
-                                            PathLine { x: 8 * root.dp; y: 13.6 * root.dp }
-                                        }
+                                        name: "mic"
+                                        iconSize: 15 * root.dp
+                                        tint: micArea.containsMouse ? root.cIce : root.cText3
                                     }
                                     MouseArea {
                                         id: micArea
@@ -1625,7 +1716,8 @@ Window {
                                     text: root.fmtNum(brain.totalTokensSpent) + " / " + root.fmtNum(brain.maxTokens > 0 ? brain.maxTokens : 8192)
                                     color: "#7C8CA3"
                                     font.family: root.fMono
-                                    font.pixelSize: Math.round(9.5 * root.dp)
+                                    font.pointSize: 9.5 * root.dp * 0.75
+                                    font.hintingPreference: Font.PreferNoHinting
                                     font.letterSpacing: 0.5
                                 }
 
@@ -1655,34 +1747,38 @@ Window {
                                 text: "ENTER"
                                 color: "#93A6BD"
                                 font.family: root.fMono
-                                font.pixelSize: Math.round(9.5 * root.dp)
+                                font.pointSize: 9.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
                                 font.letterSpacing: 1
                             }
                             Text {
                                 text: "ОТПРАВИТЬ"
                                 color: "#7C8CA3"
                                 font.family: root.fMono
-                                font.pixelSize: Math.round(9.5 * root.dp)
+                                font.pointSize: 9.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
                                 font.letterSpacing: 1
                             }
                             Text {
                                 text: "SHIFT+ENTER"
                                 color: "#93A6BD"
                                 font.family: root.fMono
-                                font.pixelSize: Math.round(9.5 * root.dp)
+                                font.pointSize: 9.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
                                 font.letterSpacing: 1
                             }
                             Text {
                                 text: "НОВАЯ СТРОКА"
                                 color: "#7C8CA3"
                                 font.family: root.fMono
-                                font.pixelSize: Math.round(9.5 * root.dp)
+                                font.pointSize: 9.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
                                 font.letterSpacing: 1
                             }
                             Item { Layout.fillWidth: true }
                             Rectangle {
-                                width: 3 * root.dp
-                                height: 3 * root.dp
+                                Layout.preferredWidth: 3 * root.dp
+                                Layout.preferredHeight: 3 * root.dp
                                 radius: 1.5 * root.dp
                                 color: root.cOk
                                 layer.enabled: true
@@ -1699,7 +1795,8 @@ Window {
                                 text: "31,2 T/S · 51 TOK"
                                 color: "#7C8CA3"
                                 font.family: root.fMono
-                                font.pixelSize: Math.round(9.5 * root.dp)
+                                font.pointSize: 9.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
                                 font.letterSpacing: 1
                             }
                         }
@@ -1721,6 +1818,15 @@ Window {
             clip: true
             Behavior on implicitWidth { NumberAnimation { duration: 320; easing.type: Easing.InOutCubic } }
 
+            // граница сцены как .stage{border-left:1px solid rgba(150,190,235,.10)}
+            Rectangle {
+                anchors.left: parent.left
+                width: root.pen
+                height: parent.height
+                z: 3
+                color: Qt.rgba(150 / 255, 190 / 255, 235 / 255, 0.10)
+            }
+
             Item {
                 anchors.fill: parent
                 clip: true
@@ -1729,18 +1835,11 @@ Window {
                     id: art
                     source: root.artSource
                     asynchronous: true
-                    readonly property real sc: Math.max(stage.width / 2870, stage.height / 1770)
-                    width: 2870 * sc
-                    height: 1770 * sc
+                    readonly property real sc: Math.max(stage.width / 2607, stage.height / 1608)
+                    width: 2607 * sc
+                    height: 1608 * sc
                     x: (stage.width - width) * 0.94
                     y: (stage.height - height) * 0.5
-                }
-
-                // общее затемнение арта
-                Rectangle {
-                    anchors.fill: parent
-                    color: "#04070e"
-                    opacity: 0.18
                 }
 
                 // левая вуаль
@@ -1749,18 +1848,19 @@ Window {
                     gradient: Gradient {
                         orientation: Gradient.Horizontal
                         GradientStop { position: 0.00; color: "#e604070e" }
-                        GradientStop { position: 0.07; color: "#8c04070e" }
-                        GradientStop { position: 0.22; color: "#0004070e" }
+                        GradientStop { position: 0.06; color: "#8c04070e" }
+                        GradientStop { position: 0.18; color: "#0004070e" }
                     }
                 }
                 // низ
                 Rectangle {
                     anchors.fill: parent
                     gradient: Gradient {
-                        GradientStop { position: 0.00; color: "#0004070e" }
-                        GradientStop { position: 0.52; color: "#0004070e" }
-                        GradientStop { position: 0.80; color: "#a604070e" }
-                        GradientStop { position: 1.00; color: "#e004070e" }
+                        GradientStop { position: 0.00; color: "#8c04070e" }
+                        GradientStop { position: 0.16; color: "#0004070e" }
+                        GradientStop { position: 0.58; color: "#0004070e" }
+                        GradientStop { position: 0.90; color: "#b804070e" }
+                        GradientStop { position: 1.00; color: "#eb04070e" }
                     }
                 }
                 // правое затемнение
@@ -1781,8 +1881,8 @@ Window {
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 anchors.margins: 14 * root.dp
-                height: 50 * root.dp
-                radius: 9 * root.dp
+                height: 58 * root.dp
+                radius: 12 * root.dp
                 color: Qt.rgba(0.02, 0.04, 0.07, 0.74)
                 border.width: 1
                 border.color: Qt.rgba(0.59, 0.72, 0.89, 0.16)
@@ -1791,10 +1891,10 @@ Window {
                 // play
                 Item {
                     id: playBtn
-                    width: 30 * root.dp
-                    height: 30 * root.dp
+                    width: 32 * root.dp
+                    height: 32 * root.dp
                     anchors.left: parent.left
-                    anchors.leftMargin: 9 * root.dp
+                    anchors.leftMargin: 10 * root.dp
                     anchors.verticalCenter: parent.verticalCenter
 
                     Rectangle {
@@ -1804,19 +1904,11 @@ Window {
                         border.width: 1
                         border.color: Qt.rgba(0.75, 0.85, 0.98, 0.45)
                     }
-                    Shape {
+                    IconImage {
                         anchors.centerIn: parent
-                        width: 9 * root.dp
-                        height: 11 * root.dp
-                        ShapePath {
-                            fillColor: "#EAF2FF"
-                            strokeColor: "transparent"
-                            startX: 1 * root.dp
-                            startY: 0
-                            PathLine { x: 9 * root.dp; y: 5.5 * root.dp }
-                            PathLine { x: 1 * root.dp; y: 11 * root.dp }
-                            PathLine { x: 1 * root.dp; y: 0 }
-                        }
+                        name: "play"
+                        iconSize: 11 * root.dp
+                        tint: "#EAF2FF"
                     }
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor }
                 }
@@ -1847,38 +1939,18 @@ Window {
                 }
 
                 // статус
-                Column {
-                    anchors.right: parent.right
-                    anchors.rightMargin: 14 * root.dp
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 2 * root.dp
-
-                    Text {
-                        text: "ГОЛОС ВКЛ"
-                        color: "#7FD3B4"
-                        font.family: root.fMono
-                        font.pixelSize: Math.round(7.5 * root.fp)
-                        font.letterSpacing: 1.2
-                    }
-                    Text {
-                        text: "31,2 T/S"
-                        color: root.cText4
-                        font.family: root.fMono
-                        font.pixelSize: Math.round(7.5 * root.fp)
-                        font.letterSpacing: 0.8
-                    }
-                }
             }
 
             Text {
                 anchors.left: parent.left
                 anchors.bottom: parent.bottom
                 anchors.leftMargin: 20 * root.dp
-                anchors.bottomMargin: 76 * root.dp
+                anchors.bottomMargin: 88 * root.dp
                 text: "НЕЙРА"
                 color: "#B8CCE8"
                 font.family: root.fMono
-                font.pixelSize: Math.round(10 * root.fp)
+                font.pointSize: 10 * root.fp * 0.75
+                font.hintingPreference: Font.PreferNoHinting
                 font.letterSpacing: 3.2
                 visible: stage.width > 120 * root.dp
             }
@@ -1902,12 +1974,11 @@ Window {
         border.color: handleArea.containsMouse ? root.cIce2 : root.cLine2
         z: 60
 
-        Text {
+        IconImage {
             anchors.centerIn: parent
-            text: "‹"
-            color: handleArea.containsMouse ? root.cIce : root.cText3
-            font.family: root.fSans
-            font.pixelSize: Math.round(16 * root.fp)
+            name: "chevron-left"
+            iconSize: 13 * root.dp
+            tint: handleArea.containsMouse ? root.cIce : root.cText3
         }
         MouseArea {
             id: handleArea
@@ -1969,7 +2040,7 @@ Window {
     }
 
     // ============================================================
-    // ПАНЕЛЬ ПАРАМЕТРОВ
+    // ПАНЕЛЬ ПАРАМЕТРОВ (группы как .group в демо)
     // ============================================================
     Rectangle {
         id: params
@@ -1977,42 +2048,74 @@ Window {
         height: root.height - titleBar.height
         width: 304 * root.dp
         x: root.paramsOpen ? root.width - width : root.width
-        color: "#050a12"
+        color: "transparent"
         border.width: 0
         z: 40
+
+        // backdrop: снимок контента под панелью + блюр (аналог backdrop-filter)
+        ShaderEffectSource {
+            id: drawerBackdrop
+            anchors.fill: parent
+            sourceItem: contentRow
+            sourceRect: Qt.rect(params.x - contentRow.x, params.y - contentRow.y,
+                                params.width, params.height)
+            live: root.paramsOpen
+            recursive: false
+            visible: root.paramsOpen
+        }
+        MultiEffect {
+            anchors.fill: parent
+            source: drawerBackdrop
+            blurEnabled: true
+            blur: 1.0
+            blurMax: 40
+            visible: root.paramsOpen
+        }
+        Rectangle {
+            anchors.fill: parent
+            color: Qt.rgba(5 / 255, 10 / 255, 18 / 255, 0.92)
+        }
         Behavior on x { NumberAnimation { duration: 300; easing.type: Easing.InOutCubic } }
 
         Rectangle {
             anchors.left: parent.left
             width: 1
             height: parent.height
-            color: root.cLine2
+            color: Qt.rgba(150 / 255, 190 / 255, 235 / 255, 0.16)
         }
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 16 * root.dp
-            spacing: 12 * root.dp
+            spacing: 0
 
-            // шапка
-            RowLayout {
+            // ---------- шапка (52) ----------
+            Item {
                 Layout.fillWidth: true
+                Layout.preferredHeight: 52 * root.dp
+
                 Text {
+                    anchors.left: parent.left
+                    anchors.leftMargin: 16 * root.dp
+                    anchors.verticalCenter: parent.verticalCenter
                     text: "ПАРАМЕТРЫ ЧАТА"
-                    color: "#D5DAE8"
+                    color: "#9DB2CC"
                     font.family: root.fMono
-                    font.pixelSize: Math.round(9 * root.fp)
+                    font.pointSize: 9 * root.dp * 0.75
+                    font.hintingPreference: Font.PreferNoHinting
                     font.letterSpacing: 1.6
                 }
-                Item { Layout.fillWidth: true }
                 Item {
-                    Layout.preferredWidth: 24 * root.dp
-                    Layout.preferredHeight: 24 * root.dp
-                    Text {
+                    anchors.right: parent.right
+                    anchors.rightMargin: 14 * root.dp
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 24 * root.dp
+                    height: 24 * root.dp
+
+                    IconImage {
                         anchors.centerIn: parent
-                        text: "×"
-                        color: closeArea.containsMouse ? root.cIce : root.cText3
-                        font.pixelSize: Math.round(14 * root.fp)
+                        name: "x"
+                        iconSize: 12 * root.dp
+                        tint: closeArea.containsMouse ? root.cIce : root.cText3
                     }
                     MouseArea {
                         id: closeArea
@@ -2022,240 +2125,475 @@ Window {
                         onClicked: root.paramsOpen = false
                     }
                 }
-            }
-
-            Rectangle { Layout.fillWidth: true; height: 1; color: root.cLine }
-
-            // ГЕНЕРАЦИЯ
-            Text {
-                text: "ГЕНЕРАЦИЯ"
-                color: root.cText4
-                font.family: root.fMono
-                font.pixelSize: Math.round(8 * root.fp)
-                font.letterSpacing: 1.8
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 5 * root.dp
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    Text { text: "Температура"; color: root.cText2; font.family: root.fSans; font.pixelSize: Math.round(11.5 * root.fp) }
-                    Item { Layout.fillWidth: true }
-                    Rectangle {
-                        width: 34 * root.dp; height: 16 * root.dp; radius: 3 * root.dp
-                        color: Qt.rgba(0.55, 0.70, 0.90, 0.10)
-                        border.width: 1; border.color: root.cLine
-                        Text {
-                            anchors.centerIn: parent
-                            text: brain.temperature.toFixed(2)
-                            color: root.cIce2
-                            font.family: root.fMono
-                            font.pixelSize: Math.round(8 * root.fp)
-                        }
-                    }
-                }
-                NeuraSlider {
-                    Layout.fillWidth: true
-                    from: 0; to: 2
-                    value: brain.temperature
-                    onMoved: (v) => brain.temperature = v
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    Text { text: "ТОЧНО"; color: root.cText4; font.family: root.fMono; font.pixelSize: Math.round(7 * root.fp); font.letterSpacing: 1 }
-                    Item { Layout.fillWidth: true }
-                    Text { text: "СМЕЛО"; color: root.cText4; font.family: root.fMono; font.pixelSize: Math.round(7 * root.fp); font.letterSpacing: 1 }
-                }
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 5 * root.dp
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    Text { text: "Лимит ответа"; color: root.cText2; font.family: root.fSans; font.pixelSize: Math.round(11.5 * root.fp) }
-                    Item { Layout.fillWidth: true }
-                    Rectangle {
-                        width: 42 * root.dp; height: 16 * root.dp; radius: 3 * root.dp
-                        color: Qt.rgba(0.55, 0.70, 0.90, 0.10)
-                        border.width: 1; border.color: root.cLine
-                        Text {
-                            anchors.centerIn: parent
-                            text: root.fmtNum(brain.maxTokens > 0 ? brain.maxTokens : 8192)
-                            color: root.cIce2
-                            font.family: root.fMono
-                            font.pixelSize: Math.round(8 * root.fp)
-                        }
-                    }
-                }
-                NeuraSlider {
-                    Layout.fillWidth: true
-                    from: 256; to: 8192
-                    value: brain.maxTokens
-                    onMoved: (v) => brain.maxTokens = Math.round(v)
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    Text { text: "256"; color: root.cText4; font.family: root.fMono; font.pixelSize: Math.round(7 * root.fp); font.letterSpacing: 1 }
-                    Item { Layout.fillWidth: true }
-                    Text { text: "ТОКЕНОВ"; color: root.cText4; font.family: root.fMono; font.pixelSize: Math.round(7 * root.fp); font.letterSpacing: 1 }
-                }
-            }
-
-            // модель
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 5 * root.dp
-                Text { text: "Модель"; color: root.cText2; font.family: root.fSans; font.pixelSize: Math.round(11.5 * root.fp) }
                 Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 30 * root.dp
-                    radius: 6 * root.dp
-                    color: Qt.rgba(0.55, 0.70, 0.90, 0.04)
-                    border.width: 1
-                    border.color: root.cLine
-                    Text {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 9 * root.dp
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: root.stubModel
-                        color: "#DDE1EE"
-                        font.family: root.fSans
-                        font.pixelSize: Math.round(11 * root.fp)
-                    }
-                    Text {
-                        anchors.right: parent.right
-                        anchors.rightMargin: 9 * root.dp
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "⌄"
-                        color: root.cText4
-                        font.pixelSize: Math.round(11 * root.fp)
-                    }
-                }
-                RowLayout {
-                    spacing: 6 * root.dp
-                    Rectangle { width: 4 * root.dp; height: 4 * root.dp; radius: 2 * root.dp; color: root.cOk }
-                    Text { text: "ЛОКАЛЬНО · 4-BIT"; color: root.cText4; font.family: root.fMono; font.pixelSize: Math.round(7 * root.fp); font.letterSpacing: 1 }
-                }
-            }
-
-            Rectangle { Layout.fillWidth: true; height: 1; color: root.cLine }
-
-            // ГОЛОС
-            Text {
-                text: "ГОЛОС"
-                color: root.cText4
-                font.family: root.fMono
-                font.pixelSize: Math.round(8 * root.fp)
-                font.letterSpacing: 1.8
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                Text { text: "Озвучивать ответы"; color: root.cText2; font.family: root.fSans; font.pixelSize: Math.round(11.5 * root.fp) }
-                Item { Layout.fillWidth: true }
-                NeuraSwitch {
-                    checked: root.stubVoice
-                    onToggled: root.stubVoice = !root.stubVoice
-                }
-            }
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 30 * root.dp
-                radius: 6 * root.dp
-                color: Qt.rgba(0.55, 0.70, 0.90, 0.04)
-                border.width: 1
-                border.color: root.cLine
-                Text {
-                    anchors.left: parent.left
-                    anchors.leftMargin: 9 * root.dp
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: root.stubVoiceTone
-                    color: "#DDE1EE"
-                    font.family: root.fSans
-                    font.pixelSize: Math.round(11 * root.fp)
-                }
-            }
-
-            Rectangle { Layout.fillWidth: true; height: 1; color: root.cLine }
-
-            // ПЕРСОНА
-            Text {
-                text: "ПЕРСОНА"
-                color: root.cText4
-                font.family: root.fMono
-                font.pixelSize: Math.round(8 * root.fp)
-                font.letterSpacing: 1.8
-            }
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 58 * root.dp
-                radius: 6 * root.dp
-                color: Qt.rgba(0.55, 0.70, 0.90, 0.04)
-                border.width: 1
-                border.color: root.cLine
-                Text {
-                    anchors.fill: parent
-                    anchors.margins: 8 * root.dp
-                    text: "Ты — Нейра. Тёплая, внимательная, говоришь коротко и по делу."
-                    wrapMode: Text.Wrap
-                    color: "#B9C7DA"
-                    font.family: root.fSans
-                    font.pixelSize: Math.round(10.5 * root.fp)
-                }
-                Text {
-                    anchors.right: parent.right
                     anchors.bottom: parent.bottom
-                    anchors.margins: 6 * root.dp
-                    text: "78 / 2000"
-                    color: root.cText4
-                    font.family: root.fMono
-                    font.pixelSize: Math.round(7 * root.fp)
+                    width: parent.width
+                    height: 1
+                    color: root.cLine
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: root.cLine }
+            // ---------- тело ----------
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.leftMargin: 16 * root.dp
+                Layout.rightMargin: 16 * root.dp
+                Layout.topMargin: 14 * root.dp
+                spacing: 16 * root.dp
 
-            // ПАМЯТЬ
-            Text {
-                text: "ПАМЯТЬ"
-                color: root.cText4
-                font.family: root.fMono
-                font.pixelSize: Math.round(8 * root.fp)
-                font.letterSpacing: 1.8
+                // ===== ГЕНЕРАЦИЯ =====
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 10 * root.dp
+
+                    Text {
+                        text: "ГЕНЕРАЦИЯ"
+                        color: "#4F6076"
+                        font.family: root.fMono
+                        font.pointSize: 8 * root.dp * 0.75
+                        font.hintingPreference: Font.PreferNoHinting
+                        font.letterSpacing: 1.6
+                    }
+
+                    // температура
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 6 * root.dp
+
+                        RowLayout {
+                            Layout.preferredHeight: 18 * root.dp
+                            Layout.fillWidth: true
+                            spacing: 6 * root.dp
+
+                            Text {
+                                text: "Температура"
+                                color: "#A9B8CC"
+                                font.family: root.fSans
+                                font.pointSize: 11.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
+                            }
+                            Item { Layout.fillWidth: true }
+                            Rectangle {
+                                Layout.preferredHeight: 18 * root.dp
+                                Layout.preferredWidth: valueTemp.implicitWidth + 8 * root.dp
+                                radius: 3 * root.dp
+                                color: Qt.rgba(0.47, 0.65, 0.86, 0.10)
+                                border.width: 1
+                                border.color: Qt.rgba(0.59, 0.75, 0.92, 0.16)
+
+                                Text {
+                                    id: valueTemp
+                                    anchors.centerIn: parent
+                                    text: brain.temperature.toFixed(2)
+                                    color: root.cIce2
+                                    font.family: root.fMono
+                                    font.pointSize: 9 * root.dp * 0.75
+                                    font.hintingPreference: Font.PreferNoHinting
+                                    font.letterSpacing: 0.45
+                                }
+                            }
+                        }
+                        NeuraSlider {
+                            Layout.fillWidth: true
+                            from: 0
+                            to: 2
+                            value: brain.temperature
+                            onMoved: (v) => brain.temperature = v
+                        }
+                        RowLayout {
+                            Layout.preferredHeight: 10 * root.dp
+                            Layout.fillWidth: true
+                            Text {
+                                text: "ТОЧНО"
+                                color: "#4A5B70"
+                                font.family: root.fMono
+                                font.pointSize: 7.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
+                                font.letterSpacing: 1.05
+                            }
+                            Item { Layout.fillWidth: true }
+                            Text {
+                                text: "СМЕЛО"
+                                color: "#4A5B70"
+                                font.family: root.fMono
+                                font.pointSize: 7.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
+                                font.letterSpacing: 1.05
+                            }
+                        }
+                    }
+
+                    // лимит ответа
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 6 * root.dp
+
+                        RowLayout {
+                            Layout.preferredHeight: 18 * root.dp
+                            Layout.fillWidth: true
+                            spacing: 6 * root.dp
+
+                            Text {
+                                text: "Лимит ответа"
+                                color: "#A9B8CC"
+                                font.family: root.fSans
+                                font.pointSize: 11.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
+                            }
+                            Item { Layout.fillWidth: true }
+                            Rectangle {
+                                Layout.preferredHeight: 18 * root.dp
+                                Layout.preferredWidth: valueLimit.implicitWidth + 8 * root.dp
+                                radius: 3 * root.dp
+                                color: Qt.rgba(0.47, 0.65, 0.86, 0.10)
+                                border.width: 1
+                                border.color: Qt.rgba(0.59, 0.75, 0.92, 0.16)
+
+                                Text {
+                                    id: valueLimit
+                                    anchors.centerIn: parent
+                                    text: root.fmtNum(brain.maxTokens > 0 ? brain.maxTokens : 8192)
+                                    color: root.cIce2
+                                    font.family: root.fMono
+                                    font.pointSize: 9 * root.dp * 0.75
+                                    font.hintingPreference: Font.PreferNoHinting
+                                    font.letterSpacing: 0.45
+                                }
+                            }
+                        }
+                        NeuraSlider {
+                            Layout.fillWidth: true
+                            from: 256
+                            to: 8192
+                            value: brain.maxTokens > 0 ? brain.maxTokens : 8192
+                            onMoved: (v) => brain.maxTokens = Math.round(v)
+                        }
+                        RowLayout {
+                            Layout.preferredHeight: 10 * root.dp
+                            Layout.fillWidth: true
+                            Text {
+                                text: "256"
+                                color: "#4A5B70"
+                                font.family: root.fMono
+                                font.pointSize: 7.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
+                                font.letterSpacing: 1.05
+                            }
+                            Item { Layout.fillWidth: true }
+                            Text {
+                                text: "ТОКЕНОВ"
+                                color: "#4A5B70"
+                                font.family: root.fMono
+                                font.pointSize: 7.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
+                                font.letterSpacing: 1.05
+                            }
+                        }
+                    }
+
+                    // модель
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 6 * root.dp
+
+                        Text {
+                            text: "Модель"
+                            color: "#A9B8CC"
+                            font.family: root.fSans
+                            font.pointSize: 11.5 * root.dp * 0.75
+                            font.hintingPreference: Font.PreferNoHinting
+                        }
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 32 * root.dp
+                            radius: 6 * root.dp
+                            color: Qt.rgba(0.55, 0.71, 0.90, 0.035)
+                            border.width: 1
+                            border.color: root.cLine
+
+                            Text {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 9 * root.dp
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: root.stubModel
+                                color: "#DCE6F3"
+                                font.family: root.fSans
+                                font.pointSize: 11.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
+                            }
+                            IconImage {
+                                anchors.right: parent.right
+                                anchors.rightMargin: 8 * root.dp
+                                anchors.verticalCenter: parent.verticalCenter
+                                name: "chevron"
+                                iconSize: 14 * root.dp
+                                tint: "#6E819B"
+                            }
+                        }
+                        RowLayout {
+                            spacing: 6 * root.dp
+                            Rectangle {
+                                Layout.preferredWidth: 3 * root.dp
+                                Layout.preferredHeight: 3 * root.dp
+                                radius: 1.5 * root.dp
+                                color: root.cOk
+                            }
+                            Text {
+                                text: "ЛОКАЛЬНО · 4-BIT"
+                                color: "#4F6076"
+                                font.family: root.fMono
+                                font.pointSize: 7.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
+                                font.letterSpacing: 0.9
+                            }
+                        }
+                    }
+                }
+
+                // ===== ГОЛОС =====
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 0
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 1
+                        color: root.cLine
+                    }
+                    Item { Layout.preferredHeight: 16 * root.dp }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 10 * root.dp
+
+                        Text {
+                            text: "ГОЛОС"
+                            color: "#4F6076"
+                            font.family: root.fMono
+                            font.pointSize: 8 * root.dp * 0.75
+                            font.hintingPreference: Font.PreferNoHinting
+                            font.letterSpacing: 1.6
+                        }
+                        RowLayout {
+                            Layout.preferredHeight: 18 * root.dp
+                            Layout.fillWidth: true
+                            spacing: 10 * root.dp
+
+                            Text {
+                                text: "Озвучивать ответы"
+                                color: "#A9B8CC"
+                                font.family: root.fSans
+                                font.pointSize: 11.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
+                            }
+                            Item { Layout.fillWidth: true }
+                            NeuraSwitch {
+                                checked: root.stubVoice
+                                onToggled: root.stubVoice = !root.stubVoice
+                            }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 6 * root.dp
+
+                            Text {
+                                text: "Тембр"
+                                color: "#A9B8CC"
+                                font.family: root.fSans
+                                font.pointSize: 11.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
+                            }
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 32 * root.dp
+                                radius: 6 * root.dp
+                                color: Qt.rgba(0.55, 0.71, 0.90, 0.035)
+                                border.width: 1
+                                border.color: root.cLine
+
+                                Text {
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 9 * root.dp
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: root.stubVoiceTone
+                                    color: "#DCE6F3"
+                                    font.family: root.fSans
+                                    font.pointSize: 11.5 * root.dp * 0.75
+                                    font.hintingPreference: Font.PreferNoHinting
+                                }
+                                IconImage {
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 8 * root.dp
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    name: "chevron"
+                                    iconSize: 14 * root.dp
+                                    tint: "#6E819B"
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ===== ПЕРСОНА =====
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 0
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 1
+                        color: root.cLine
+                    }
+                    Item { Layout.preferredHeight: 14 * root.dp }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 10 * root.dp
+
+                        Text {
+                            text: "ПЕРСОНА"
+                            color: "#4F6076"
+                            font.family: root.fMono
+                            font.pointSize: 8 * root.dp * 0.75
+                            font.hintingPreference: Font.PreferNoHinting
+                            font.letterSpacing: 1.6
+                        }
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 72 * root.dp
+                            radius: 6 * root.dp
+                            color: Qt.rgba(0.55, 0.71, 0.90, 0.035)
+                            border.width: 1
+                            border.color: root.cLine
+
+                            Text {
+                                anchors.fill: parent
+                                anchors.leftMargin: 9 * root.dp
+                                anchors.rightMargin: 9 * root.dp
+                                anchors.topMargin: 7 * root.dp
+                                anchors.bottomMargin: 7 * root.dp
+                                text: "Ты — Нейра. Тёплая, внимательная, говоришь коротко и по делу."
+                                wrapMode: Text.Wrap
+                                color: "#B9C7DA"
+                                font.family: root.fSans
+                                font.pointSize: 11.2 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
+                                lineHeight: 1.5
+                                lineHeightMode: Text.ProportionalHeight
+                            }
+                            Text {
+                                anchors.right: parent.right
+                                anchors.rightMargin: 7 * root.dp
+                                anchors.bottom: parent.bottom
+                                anchors.bottomMargin: 5 * root.dp
+                                text: "78 / 2000"
+                                color: "#46566B"
+                                font.family: root.fMono
+                                font.pointSize: 7.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
+                                font.letterSpacing: 0.75
+                            }
+                        }
+                    }
+                }
+
+                // ===== ПАМЯТЬ =====
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 0
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 1
+                        color: root.cLine
+                    }
+                    Item { Layout.preferredHeight: 12 * root.dp }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 10 * root.dp
+
+                        Text {
+                            text: "ПАМЯТЬ"
+                            color: "#4F6076"
+                            font.family: root.fMono
+                            font.pointSize: 8 * root.dp * 0.75
+                            font.hintingPreference: Font.PreferNoHinting
+                            font.letterSpacing: 1.6
+                        }
+                        RowLayout {
+                            Layout.preferredHeight: 18 * root.dp
+                            Layout.fillWidth: true
+                            spacing: 10 * root.dp
+
+                            Text {
+                                text: "Помнить этот чат"
+                                color: "#A9B8CC"
+                                font.family: root.fSans
+                                font.pointSize: 11.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
+                            }
+                            Item { Layout.fillWidth: true }
+                            NeuraSwitch {
+                                checked: root.stubMemory
+                                onToggled: root.stubMemory = !root.stubMemory
+                            }
+                        }
+                        RowLayout {
+                            Layout.preferredHeight: 18 * root.dp
+                            Layout.fillWidth: true
+                            spacing: 10 * root.dp
+
+                            Text {
+                                text: "Предлагать темы"
+                                color: "#A9B8CC"
+                                font.family: root.fSans
+                                font.pointSize: 11.5 * root.dp * 0.75
+                                font.hintingPreference: Font.PreferNoHinting
+                            }
+                            Item { Layout.fillWidth: true }
+                            NeuraSwitch {
+                                checked: root.stubTopics
+                                onToggled: root.stubTopics = !root.stubTopics
+                            }
+                        }
+                    }
+                }
+
+                Item { Layout.fillHeight: true }
+            }
+
+            // ---------- футер ----------
+            Rectangle {
+                Layout.fillWidth: true
+                height: 1
+                color: root.cLine
             }
             RowLayout {
                 Layout.fillWidth: true
-                Text { text: "Помнить этот чат"; color: root.cText2; font.family: root.fSans; font.pixelSize: Math.round(11.5 * root.fp) }
-                Item { Layout.fillWidth: true }
-                NeuraSwitch { checked: root.stubMemory; onToggled: root.stubMemory = !root.stubMemory }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                Text { text: "Предлагать темы"; color: root.cText2; font.family: root.fSans; font.pixelSize: Math.round(11.5 * root.fp) }
-                Item { Layout.fillWidth: true }
-                NeuraSwitch { checked: root.stubTopics; onToggled: root.stubTopics = !root.stubTopics }
-            }
+                Layout.leftMargin: 16 * root.dp
+                Layout.rightMargin: 16 * root.dp
+                Layout.topMargin: 10 * root.dp
+                Layout.bottomMargin: 10 * root.dp
+                spacing: 6 * root.dp
 
-            Item { Layout.fillHeight: true }
-
-            RowLayout {
-                Layout.fillWidth: true
                 Rectangle {
-                    Layout.preferredWidth: 84 * root.dp
-                    Layout.preferredHeight: 28 * root.dp
+                    Layout.preferredHeight: 30 * root.dp
+                    Layout.preferredWidth: resetLabel.implicitWidth + 22 * root.dp
                     radius: 5 * root.dp
-                    color: Qt.rgba(0.55, 0.70, 0.90, 0.04)
+                    color: Qt.rgba(0.55, 0.71, 0.90, 0.03)
                     border.width: 1
                     border.color: root.cLine
+
                     Text {
+                        id: resetLabel
                         anchors.centerIn: parent
                         text: "Сбросить"
-                        color: root.cText2
+                        color: "#AEBBCD"
                         font.family: root.fSans
-                        font.pixelSize: Math.round(10.5 * root.fp)
+                        font.pointSize: 11 * root.dp * 0.75
+                        font.hintingPreference: Font.PreferNoHinting
                     }
                     MouseArea {
                         anchors.fill: parent
@@ -2271,19 +2609,22 @@ Window {
                 }
                 Item { Layout.fillWidth: true }
                 Rectangle {
-                    Layout.preferredWidth: 84 * root.dp
-                    Layout.preferredHeight: 28 * root.dp
+                    Layout.preferredHeight: 30 * root.dp
+                    Layout.preferredWidth: doneLabel.implicitWidth + 22 * root.dp
                     radius: 5 * root.dp
                     gradient: Gradient {
                         GradientStop { position: 0.0; color: "#EAF2FF" }
                         GradientStop { position: 1.0; color: "#C3D9F8" }
                     }
+
                     Text {
+                        id: doneLabel
                         anchors.centerIn: parent
                         text: "Готово"
                         color: "#05101f"
                         font.family: root.fSans
-                        font.pixelSize: Math.round(10.5 * root.fp)
+                        font.pointSize: 11 * root.dp * 0.75
+                        font.hintingPreference: Font.PreferNoHinting
                         font.weight: Font.DemiBold
                     }
                     MouseArea {
@@ -2341,7 +2682,8 @@ Window {
                         text: modelData.label
                         color: "#C4D1E2"
                         font.family: root.fSans
-                        font.pixelSize: Math.round(11.5 * root.fp)
+                        font.pointSize: 11.5 * root.dp * 0.75
+                        font.hintingPreference: Font.PreferNoHinting
                     }
                     MouseArea {
                         id: itemArea
@@ -2379,7 +2721,8 @@ Window {
                 text: "Сохранить сессию"
                 color: root.cText
                 font.family: root.fSans
-                font.pixelSize: Math.round(15 * root.fp)
+                font.pointSize: 15 * root.dp * 0.75
+                font.hintingPreference: Font.PreferNoHinting
                 font.weight: Font.DemiBold
             }
 
@@ -2401,7 +2744,8 @@ Window {
                     placeholderText: "Имя сессии"
                     placeholderTextColor: root.cText4
                     font.family: root.fSans
-                    font.pixelSize: Math.round(12 * root.fp)
+                    font.pointSize: 12 * root.dp * 0.75
+                    font.hintingPreference: Font.PreferNoHinting
                     background: Rectangle { color: "transparent" }
                     Keys.onReturnPressed: (event) => {
                         event.accepted = true
@@ -2423,7 +2767,8 @@ Window {
                         text: parent.text
                         color: root.cText3
                         font.family: root.fSans
-                        font.pixelSize: Math.round(11.5 * root.fp)
+                        font.pointSize: 11.5 * root.dp * 0.75
+                        font.hintingPreference: Font.PreferNoHinting
                         horizontalAlignment: Text.AlignHCenter
                     }
                     background: Rectangle { color: "transparent" }
@@ -2442,7 +2787,8 @@ Window {
                         text: "Сохранить"
                         color: "#05101f"
                         font.family: root.fSans
-                        font.pixelSize: Math.round(11 * root.fp)
+                        font.pointSize: 11 * root.dp * 0.75
+                        font.hintingPreference: Font.PreferNoHinting
                         font.weight: Font.DemiBold
                     }
                     MouseArea {
@@ -2517,7 +2863,7 @@ Window {
         if (messages.count === 0) {
             messages.append({ role: "assistant", text: "Привет! Я рядом. Можем вернуться к дизайну чата — или начать с чистого листа, как тебе удобнее.", time: "14:52", think: false })
             messages.append({ role: "user", text: "Помоги переделать экран чата. На широком мониторе справа пусто, а текст теряется на фоне.", time: "14:57", think: false })
-            messages.append({ role: "assistant", text: "Тут две разные проблемы, и лечатся они по-разному.\n\n**Пустота справа** — это не про ширину, а про отсутствие второго слоя.\n\n1. Арт получает свою сцену.\n2. Диалог садится на плотную поверхность.\n3. Параметры уходят в панель.\n\nТак экран заполняется смыслом, а не декором.", time: "14:58", think: true })
+            messages.append({ role: "assistant", text: "Тут две разные проблемы, и лечатся они по-разному.\n\n**Пустота справа** — это не про ширину, а про отсутствие второго слоя. У чата есть что показать рядом: присутствие, параметры, голос.\n\n**Текст «теряется»**, потому что панели полупрозрачные и арт просвечивает прямо под буквами.\n\n1. Арт получает свою сцену — он больше не служит фоном для текста.\n2. Диалог садится на плотную поверхность и держит контраст.\n3. Параметры уходят в панель, которая открывается по запросу.\n\nТак экран заполняется смыслом, а не декором. Оставляем?", time: "14:58", think: true })
         }
     }
 
@@ -2532,28 +2878,34 @@ Window {
         property string num: ""
         property string title: ""
 
-        Layout.topMargin: 10 * root.dp
+        Layout.topMargin: 6.8 * root.dp
+        Layout.bottomMargin: 6 * root.dp
         spacing: 8 * root.dp
 
         Text {
             text: sec.num
             color: "#3E4E63"
             font.family: root.fMono
-            font.pixelSize: Math.round(8 * root.fp)
+            font.pointSize: 8.5 * root.dp * 0.75
+            font.hintingPreference: Font.PreferNoHinting
             font.letterSpacing: 1.4
         }
         Text {
             text: sec.title
             color: root.cText4
             font.family: root.fMono
-            font.pixelSize: Math.round(8 * root.fp)
+            font.pointSize: 8.5 * root.dp * 0.75
+            font.hintingPreference: Font.PreferNoHinting
             font.letterSpacing: 1.8
         }
-        Item { Layout.fillWidth: true }
         Rectangle {
-            Layout.preferredWidth: 40 * root.dp
+            Layout.fillWidth: true
             height: 1
-            color: root.cLine
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: root.cLine }
+                GradientStop { position: 1.0; color: "transparent" }
+            }
         }
     }
 
@@ -2565,60 +2917,76 @@ Window {
         property string time: ""
         property bool active: false
 
-        Layout.preferredHeight: 46 * root.dp
+        Layout.preferredHeight: Math.round(43 * root.dp) - 3
+        Layout.topMargin: Math.round(1 * root.dp)
         radius: 7 * root.dp
-        color: chat.active ? Qt.rgba(0.47, 0.65, 0.86, 0.13)
+        color: chat.active ? "transparent"
                            : (chatArea.containsMouse ? Qt.rgba(0.55, 0.70, 0.90, 0.05) : "transparent")
-        border.width: chat.active ? 1 : 0
-        border.color: Qt.rgba(0.59, 0.75, 0.92, 0.14)
+
+        Rectangle {
+            anchors.fill: parent
+            radius: parent.radius
+            visible: chat.active
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: Qt.rgba(0.47, 0.65, 0.86, 0.13) }
+                GradientStop { position: 1.0; color: Qt.rgba(0.47, 0.65, 0.86, 0.04) }
+            }
+            border.width: root.pen
+            border.color: Qt.rgba(0.59, 0.75, 0.92, 0.10)
+        }
 
         Rectangle {
             visible: chat.active
             width: 1.5 * root.dp
-            height: parent.height - 18 * root.dp
-            radius: 1
             anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            color: root.cIce
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.topMargin: 8 * root.dp
+            anchors.bottomMargin: 8 * root.dp
+            radius: 1
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: "#EAF3FF" }
+                GradientStop { position: 1.0; color: "#7FA8DC" }
+            }
         }
-        Rectangle {
+        IconImage {
             anchors.left: parent.left
             anchors.leftMargin: 10 * root.dp
-            anchors.top: parent.top
-            anchors.topMargin: 11 * root.dp
-            width: 12 * root.dp
-            height: 10 * root.dp
-            radius: 3 * root.dp
-            color: "transparent"
-            border.width: 1
-            border.color: chat.active ? root.cIce2 : root.cText4
+            anchors.verticalCenter: parent.verticalCenter
+            name: "chat"
+            iconSize: 13 * root.dp
+            tint: chat.active ? root.cIce2 : root.cText4
         }
         Text {
             anchors.right: parent.right
             anchors.rightMargin: 10 * root.dp
-            anchors.top: parent.top
-            anchors.topMargin: 7 * root.dp
+            anchors.verticalCenter: parent.verticalCenter
             text: chat.time
             color: root.cText4
             font.family: root.fMono
-            font.pixelSize: Math.round(7.5 * root.fp)
+            font.pointSize: 8.5 * root.dp * 0.75
+            font.hintingPreference: Font.PreferNoHinting
+            font.letterSpacing: 0.6
         }
         Column {
             anchors.left: parent.left
             anchors.leftMargin: 28 * root.dp
             anchors.right: parent.right
-            anchors.rightMargin: 42 * root.dp
+            anchors.rightMargin: 10 * root.dp
             anchors.verticalCenter: parent.verticalCenter
-            spacing: 1
+            anchors.verticalCenterOffset: 2.5 * root.dp
+            spacing: 4 * root.dp
 
             Text {
-                width: parent.width
+                width: parent.width - 32 * root.dp
                 text: chat.title
                 elide: Text.ElideRight
                 color: chat.active ? "#F1F6FD" : root.cText2
                 font.family: root.fSans
-                font.pixelSize: Math.round(12.5 * root.fp)
-                font.weight: chat.active ? Font.DemiBold : Font.Normal
+                font.pointSize: 12.5 * root.dp * 0.75
+                font.hintingPreference: Font.PreferNoHinting
+                font.weight: Font.DemiBold
             }
             Text {
                 width: parent.width
@@ -2626,7 +2994,8 @@ Window {
                 elide: Text.ElideRight
                 color: chat.active ? "#8FA2BC" : root.cText4
                 font.family: root.fSans
-                font.pixelSize: Math.round(10.5 * root.fp)
+                font.pointSize: 10.8 * root.dp * 0.75
+                font.hintingPreference: Font.PreferNoHinting
             }
         }
         MouseArea {
@@ -2638,105 +3007,145 @@ Window {
         }
     }
 
+    // ============================================================
+    // ТЕЛО СООБЩЕНИЯ (блочный рендер: абзац / заголовок / список / код)
+    // ============================================================
+    component MessageBody: Column {
+        id: mb
+        property string source: ""
+        property color bodyColor: root.cBody
+        property int baseSize: 14
+
+        spacing: 10 * root.dp
+
+        Repeater {
+            model: root.parseBlocks(mb.source)
+
+            delegate: Item {
+                id: blockItem
+                property var blk: modelData
+                width: mb.width
+                height: (blk.kind === "ol" || blk.kind === "ul")
+                    ? listCol.implicitHeight + 2 * root.dp
+                    : (blk.kind === "code" ? codeRect.height : textBlock.implicitHeight)
+
+                Text {
+                    id: textBlock
+                    visible: blk.kind === "p" || blk.kind === "h"
+                    width: parent.width
+                    textFormat: Text.RichText
+                    text: root.mdInline(blk.text || "")
+                    color: mb.bodyColor
+                    font.family: root.fSans
+                    font.pixelSize: blk.kind === "h"
+                        ? Math.round((blk.level === 1 ? 18 : blk.level === 2 ? 16 : 14) * root.fp)
+                        : Math.round(mb.baseSize * root.fp)
+                    font.weight: blk.kind === "h" ? Font.DemiBold : Font.Normal
+                    lineHeight: 1.68
+                    lineHeightMode: Text.ProportionalHeight
+                    wrapMode: Text.WordWrap
+                }
+
+                Column {
+                    id: listCol
+                    visible: blk.kind === "ol" || blk.kind === "ul"
+                    width: parent.width
+                    spacing: 7 * root.dp
+
+                    Repeater {
+                        model: blk.items || []
+
+                        delegate: Row {
+                            width: listCol.width
+                            spacing: 8 * root.dp
+
+                            Rectangle {
+                                visible: blk.kind === "ol"
+                                width: 16 * root.dp
+                                height: 16 * root.dp
+                                radius: 4 * root.dp
+                                color: Qt.rgba(0.47, 0.65, 0.86, 0.10)
+                                border.width: 1
+                                border.color: Qt.rgba(0.59, 0.75, 0.92, 0.20)
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: index + 1
+                                    color: root.cIce2
+                                    font.family: root.fMono
+                                    font.pointSize: 8.5 * root.dp * 0.75
+                                    font.hintingPreference: Font.PreferNoHinting
+                                }
+                            }
+                            Rectangle {
+                                visible: blk.kind === "ul"
+                                width: 4 * root.dp
+                                height: 4 * root.dp
+                                radius: 2 * root.dp
+                                color: root.cIce2
+                                anchors.top: parent.top
+                                anchors.topMargin: 9 * root.dp
+                            }
+                            Text {
+                                width: parent.width - 24 * root.dp
+                                textFormat: Text.RichText
+                                text: root.mdInline(modelData)
+                                color: mb.bodyColor
+                                font.family: root.fSans
+                                font.pixelSize: Math.round(mb.baseSize * root.fp)
+                                lineHeight: 1.68
+                                lineHeightMode: Text.ProportionalHeight
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    id: codeRect
+                    visible: blk.kind === "code"
+                    width: parent.width
+                    height: codeText.implicitHeight + 16 * root.dp
+                    radius: 6 * root.dp
+                    color: "#080d16"
+                    border.width: 1
+                    border.color: "#1a2433"
+
+                    Text {
+                        id: codeText
+                        anchors.fill: parent
+                        anchors.margins: 8 * root.dp
+                        text: blk.text || ""
+                        color: "#B9CBE0"
+                        font.family: root.fMono
+                        font.pointSize: 12 * root.dp * 0.75
+                        font.hintingPreference: Font.PreferNoHinting
+                        wrapMode: Text.NoWrap
+                    }
+                }
+            }
+        }
+    }
+
     component MsgAction: Item {
         id: act
         property string kind: ""
         signal clicked()
 
-        width: 22 * root.dp
-        height: 22 * root.dp
-
-        readonly property color tint: actArea.containsMouse ? root.cIce : "#667A93"
+        implicitWidth: 22 * root.dp
+        implicitHeight: 22 * root.dp
 
         Rectangle {
             anchors.fill: parent
             radius: 5 * root.dp
             color: actArea.containsMouse ? Qt.rgba(0.62, 0.76, 0.92, 0.10) : "transparent"
         }
-
-        Item {
-            visible: act.kind === "copy"
+        IconImage {
             anchors.centerIn: parent
-            width: 12 * root.dp
-            height: 12 * root.dp
-            Rectangle {
-                x: 0
-                y: 3.2 * root.dp
-                width: 8.2 * root.dp
-                height: 8.2 * root.dp
-                radius: 1.6 * root.dp
-                color: "transparent"
-                border.width: 1
-                border.color: act.tint
-            }
-            Rectangle {
-                x: 3.2 * root.dp
-                y: 0
-                width: 8.2 * root.dp
-                height: 8.2 * root.dp
-                radius: 1.6 * root.dp
-                color: "transparent"
-                border.width: 1
-                border.color: act.tint
-            }
+            name: act.kind === "voice" ? "volume" : act.kind
+            iconSize: 13 * root.dp
+            tint: actArea.containsMouse ? root.cIce : "#667A93"
         }
-
-        Shape {
-            visible: act.kind === "refresh"
-            anchors.centerIn: parent
-            width: 13 * root.dp
-            height: 13 * root.dp
-            ShapePath {
-                strokeColor: act.tint
-                strokeWidth: 1.2 * root.dp
-                fillColor: "transparent"
-                capStyle: ShapePath.RoundCap
-                PathAngleArc {
-                    centerX: 6.5 * root.dp
-                    centerY: 6.5 * root.dp
-                    radiusX: 4.4 * root.dp
-                    radiusY: 4.4 * root.dp
-                    startAngle: -55
-                    sweepAngle: 290
-                }
-            }
-        }
-
-        Row {
-            visible: act.kind === "voice"
-            anchors.centerIn: parent
-            spacing: 1.8 * root.dp
-            Repeater {
-                model: [5, 10, 7, 9]
-                Item {
-                    width: 1.5 * root.dp
-                    height: 11 * root.dp
-                    Rectangle {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width
-                        height: modelData * root.dp
-                        radius: width / 2
-                        color: act.tint
-                    }
-                }
-            }
-        }
-
-        Row {
-            visible: act.kind === "more"
-            anchors.centerIn: parent
-            spacing: 2 * root.dp
-            Repeater {
-                model: 3
-                Rectangle {
-                    width: 2 * root.dp
-                    height: 2 * root.dp
-                    radius: 1 * root.dp
-                    color: act.tint
-                }
-            }
-        }
-
         MouseArea {
             id: actArea
             anchors.fill: parent
@@ -2749,6 +3158,33 @@ Window {
     // ============================================================
     // SVG-ИКОНКИ (точные пути из демо)
     // ============================================================
+    component IconImage: Item {
+        id: ico
+        property string name: ""
+        property color tint: "#AAC7EF"
+        property real iconSize: 16
+
+        // implicit, а не width/height: внутри RowLayout явный width «застывает»
+        // на значении при старте и не растёт вместе с root.dp
+        // (у Image implicit-размер только для чтения — поэтому обёртка Item)
+        implicitWidth: iconSize
+        implicitHeight: iconSize
+
+        Image {
+            anchors.fill: parent
+            // SVG-символы демо (icons/svg, белые) — растр в точном размере, как в браузере
+            source: "file:///D:/AI/neira-tools/qt_neira/icons/svg/" + ico.name + ".svg"
+            sourceSize: Qt.size(Math.ceil(ico.iconSize), Math.ceil(ico.iconSize))
+            fillMode: Image.PreserveAspectFit
+            smooth: true
+            layer.enabled: true
+            layer.effect: MultiEffect {
+                colorization: 1.0
+                colorizationColor: ico.tint
+            }
+        }
+    }
+
     component SvgIcon: Item {
         id: ico
         property string d: ""
@@ -2765,6 +3201,7 @@ Window {
             Shape {
                 width: 24
                 height: 24
+                preferredRendererType: Shape.CurveRenderer
                 transform: Scale {
                     origin.x: 0
                     origin.y: 0
@@ -2789,18 +3226,19 @@ Window {
         property bool checked: false
         signal toggled()
 
-        width: 34 * root.dp
-        height: 19 * root.dp
-        radius: 5 * root.dp
-        color: sw.checked ? Qt.rgba(0.55, 0.70, 0.94, 0.22) : Qt.rgba(0.55, 0.70, 0.90, 0.10)
+        implicitWidth: 32 * root.dp
+        implicitHeight: 18 * root.dp
+        radius: 4 * root.dp
+        color: sw.checked ? "#203045" : "#1a2433"
         border.width: 1
-        border.color: sw.checked ? Qt.rgba(0.70, 0.83, 0.98, 0.45) : root.cLine
+        border.color: sw.checked ? "#627A98" : "#2b3a4e"
 
         Rectangle {
-            width: 13 * root.dp
-            height: 13 * root.dp
-            radius: 3 * root.dp
-            y: 3 * root.dp
+            width: 12 * root.dp
+            height: 12 * root.dp
+            radius: 2 * root.dp
+            // демо: border 1px + top/left 2px → 3 от края; вкл. — translateX(14)
+            y: (sw.height - height) / 2
             x: sw.checked ? sw.width - width - 3 * root.dp : 3 * root.dp
             color: sw.checked ? "#EAF2FF" : "#8CA0B9"
             Behavior on x { NumberAnimation { duration: 160 } }
@@ -2843,12 +3281,20 @@ Window {
         Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             x: Math.max(0, Math.min(track.width - width, track.width * s.ratio - width / 2))
-            width: 13 * root.dp
-            height: 13 * root.dp
+            width: 17 * root.dp
+            height: 17 * root.dp
+            radius: width / 2
+            color: Qt.rgba(0.47, 0.65, 0.86, 0.14)
+        }
+        Rectangle {
+            anchors.verticalCenter: parent.verticalCenter
+            x: Math.max(0, Math.min(track.width - width, track.width * s.ratio - width / 2))
+            width: 11 * root.dp
+            height: 11 * root.dp
             radius: width / 2
             color: "#EAF2FF"
             border.width: 2 * root.dp
-            border.color: root.cBlue
+            border.color: "#6E9BD4"
         }
         MouseArea {
             anchors.fill: parent

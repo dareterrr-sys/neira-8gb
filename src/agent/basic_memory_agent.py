@@ -254,6 +254,40 @@ if os.environ.get("NEIRA_VOICE_SWAP", "1") != "0":
     except Exception as _e:
         logger.warning(f"Neira voice_swap not loaded: {_e}")
 
+# Neira's C code checking organ (04.11, the author: «Подключить»; neira-tools/check_code_organ.py = the text chat's
+# check): a C block in her answer is compiled and run under ASan/UBSan by check_code.exe. NEIRA_CHECK_CODE=0 turns it off.
+CHECK_CODE = None
+if os.environ.get("NEIRA_CHECK_CODE", "1") != "0":
+    try:
+        CHECK_CODE = _load_tool("check_code_organ", r"D:\AI\neira-tools\check_code_organ.py")
+        if not CHECK_CODE.available():
+            raise FileNotFoundError(CHECK_CODE.CHECK_CODE_EXE)
+    except Exception as _e:
+        CHECK_CODE = None
+        logger.warning(f"Neira check_code not loaded: {_e}")
+
+# 04.11, the build self-check (field_tests/build_check.py reads this line): which organs are loaded and the council mode
+_ORGAN_STATE = {
+    "memory": NEIRA_MEMORY is not None,
+    "calculator": not calculate_text("2+2").startswith("Ошибка"),
+    "perception": getattr(perceive, "__name__", "") != "<lambda>",
+    "calendar": CALENDAR is not None,
+    "letters": LETTERS is not None,
+    "words": any(n == "slova_dept" for n, *_ in ORGANS),
+    "units": any(n == "edinicy_dept" for n, *_ in ORGANS),
+    "russkiy": RUSSKIY is not None,
+    "ege_one": EGE_ONE is not None,
+    "gramota": GRAMOTA is not None,
+    "council": COUNCIL is not None,
+    "voice_swap": VOICE_SWAP is not None,
+    "check_code": CHECK_CODE is not None,
+}
+logger.info("Neira organs: loaded=" + ",".join(k for k, v in _ORGAN_STATE.items() if v)
+            + "; missing=" + (",".join(k for k, v in _ORGAN_STATE.items() if not v) or "none")
+            + f"; COUNCIL_EXPR={os.environ.get('COUNCIL_EXPR', '0')}"
+            + f" (council uses {int(bool(COUNCIL and COUNCIL.council.EXPR))})"
+            + f"; NEIRA_CHECK_CODE={os.environ.get('NEIRA_CHECK_CODE', '1')}")
+
 
 def gramota_filter():
     """Between sentence_divider and actions_extractor: fix each spoken sentence (not <think>)."""
@@ -339,6 +373,7 @@ class BasicMemoryAgent(AgentInterface):
         self._tool_prompts = tool_prompts or {}
         self._interrupt_handled = False
         self.prompt_mode_flag = False
+        self._last_code_check = None   # the check_code organ's last result: {"code", "note"}
 
         self._tool_manager = tool_manager
         self._tool_executor = tool_executor
@@ -679,6 +714,19 @@ class BasicMemoryAgent(AgentInterface):
         timing["dispatch"] = time.perf_counter() - t0
         self._timing = {"turn_start": t0, **timing}
         logger.info("Timing: " + ", ".join(f"{k} {v * 1000:.0f} ms" for k, v in timing.items()))
+
+    async def _check_code(self, text: str) -> None:
+        """After her answer: the C blocks in it go through check_code.exe, as in the text chat (all blocks together);
+        the result goes to the log. Not wired yet (open questions to the HQ, 04.11): the autofix (more brain calls while
+        the voice is back - the voice and the brain do not share the GPU, 29.10) and what she says or shows about it."""
+        blocks = CHECK_CODE.extract_c_blocks(text)
+        if not blocks:
+            return
+        code = "\n\n".join(blocks)
+        t = time.perf_counter()
+        note = await asyncio.to_thread(CHECK_CODE.run_check, code)
+        self._last_code_check = {"code": code, "note": note}
+        logger.info(f"check_code: {CHECK_CODE.summary(note)} ({len(blocks)} C blocks, {time.perf_counter() - t:.1f} s)")
 
     async def _remember(self, text: str) -> None:
         """After the answer: a persona-free request writes down lasting facts from the user's words (neira_memory)."""
@@ -1135,9 +1183,12 @@ class BasicMemoryAgent(AgentInterface):
                 logger.debug(
                     f"Starting OpenAI tool interaction loop with {len(tools)} tools."
                 )
+                answer_text = ""   # her words, for the check_code organ
                 async for output in self._openai_tool_interaction_loop(
                     messages, tools if tools else []
                 ):
+                    if isinstance(output, str):
+                        answer_text += output
                     if parked:
                         held.append(output)
                     else:
@@ -1147,6 +1198,8 @@ class BasicMemoryAgent(AgentInterface):
                     yield output
                 if NEIRA_MEMORY and self._turn_text:   # the brain is free now: write down what was learned
                     asyncio.create_task(self._remember(self._turn_text))
+                if CHECK_CODE and "```" in answer_text:
+                    asyncio.create_task(self._check_code(answer_text))
                 return
             else:
                 logger.info("Starting simple chat completion.")
@@ -1171,6 +1224,8 @@ class BasicMemoryAgent(AgentInterface):
                     yield text_chunk
                 if complete_response:
                     self._add_message(complete_response, "assistant")
+                if CHECK_CODE and "```" in complete_response:
+                    asyncio.create_task(self._check_code(complete_response))
 
         return chat_with_memory
 

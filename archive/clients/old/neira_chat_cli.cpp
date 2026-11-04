@@ -21,6 +21,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <cctype>
+#include <iterator>
 #include <functional>
 #include <iostream>
 #include <sstream>
@@ -314,6 +316,14 @@ struct ChatState {
                    "без эмоций, без пояснений, без дублирования задания. Отвечаешь "
                    "ровно тем, что просили.";
         }
+        // общая текстовая персона всех чат-клиентов (03.11), запасная строка — если файла нет
+        static const string persona = [] {
+            std::ifstream f("D:\\AI\\neira-tools\\neira_persona.txt", std::ios::binary);
+            std::string s((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            while (!s.empty() && std::isspace((unsigned char)s.back())) s.pop_back();
+            return s;
+        }();
+        if (!persona.empty()) return persona;
         return "Ты — Нейра, ИИ-девушка, которая живёт в компьютере собеседника. "
                "Отвечаешь по-русски, живо, но по делу.";
     }

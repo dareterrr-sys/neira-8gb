@@ -37,6 +37,19 @@ SAME = ("Даны вопрос и несколько кратких ответо
 DEEP = ("Ты внимательный решатель. Тебе дан вопрос и ответы трёх специалистов, которые разошлись. Разберись сам, "
         "кто прав или нет ли правильного ответа, которого никто не дал. " + FORMAT)
 PAUSE = "Хмм... дай минутку, тут надо подумать."
+# 04.11, the author's design (24.10: «проблема не в калькуляторе, а в том, что выражение не правильно составлено, как
+# калькулятор может ошибаться?»): on a counting task the council checks the EXPRESSION each specialist builds from the
+# condition, the code computes it, and the calculator's result is the answer. Reasons first, expression last: with the
+# answer line first all three blurted «15» for 24 - 24/3 + 7 and computed 23 only in their reasons (field test C1,
+# 3 of 3; v4.0 also stopped calling the calculator in council turns, commit f4117a2). COUNCIL_EXPR=0 - v4.0 as before.
+EXPR = os.environ.get("COUNCIL_EXPR", "0") != "0"
+FORMAT_EXPR = ("Ответь строго в двух строках:\nПОЧЕМУ: <коротко, по шагам: что дано и что с ним делают по условию>\n"
+               "ВЫРАЖЕНИЕ: <одно арифметическое выражение по условию: только числа, + - * / и скобки, без единиц и "
+               "без знака =; если ответ не получить счётом — НЕТ>")
+SPECIALISTS_EXPR = {n: r.replace(FORMAT, FORMAT_EXPR) for n, r in SPECIALISTS.items()}
+DEEP_EXPR = ("Ты внимательный решатель. Тебе дан вопрос и выражения, которые три специалиста составили по его условию; "
+             "код их посчитал, и результаты разошлись. Проверь, какое выражение правильно понимает условие, или составь "
+             "своё. " + FORMAT_EXPR)
 # plan step 8в.7: independent calls (the three specialists, the three checkers) go to the server together, so it reads
 # the weights once per batch; needs llama-server --parallel N. 1 = one after another, as before.
 PARALLEL = int(os.environ.get("COUNCIL_PARALLEL", "1"))
@@ -168,16 +181,16 @@ def _complete(prompt, n, cvec=0.0):
             time.sleep(5)
 
 
-def deep_think(user, budget, cvec=0.0):
+def deep_think(user, budget, cvec=0.0, system=DEEP, marker="ОТВЕТ"):
     """v3.7, budget forcing (s1, Muennighoff et al. 2025): the deep thinker reasons up to `budget` tokens; if it has not
     closed its reasoning by then, it is closed for it and it must answer. On 40 saved disputes: 6000 tokens 34/40 in
     57 s, 1500 35/40 in 44 s, 750 34/40 in 25 s, 300 29/40 in 11 s. -> (answer text, tokens written, cut short?)"""
-    head = (f"<|im_start|>system\n{DEEP}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n"
+    head = (f"<|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n"
             "<|im_start|>assistant\n<think>\n")
     text, n = _complete(head, budget, cvec)
     if "</think>" in text:
         answer = text.split("</think>", 1)[1]
-        if "ОТВЕТ" in answer:
+        if marker in answer:
             return answer, n, False
         more, m = _complete(head + text, 160, cvec)
         return answer + more, n + m, False
@@ -195,11 +208,70 @@ def norm(s):
     return re.sub(r"[\s.,!?«»\"']+", " ", s.lower().replace("ё", "е")).strip()
 
 
+def computed(text):
+    """A specialist's or the thinker's reply in FORMAT_EXPR -> (expression, the calculator's result) or None."""
+    from calc_server import calculate_text
+    m = re.search(r"ВЫРАЖЕНИЕ:\s*(.+)", text or "")
+    e = m.group(1).strip().strip("`").strip() if m else ""
+    # «НЕТ», a list of answers («2,4») or no arithmetic at all is not an expression (the same guard as math_note)
+    if not e or "НЕТ" in e.upper() or "," in e or "=" in e or not re.search(r"\d", e):
+        return None
+    r = calculate_text(e)
+    return None if r.startswith("Ошибка") else (e, r.split(" ")[0])
+
+
+def answer_expr(task, chat, think_max, info):
+    """The author's design (see EXPR): specialists write the expression, code computes it, the result is the answer.
+    -> (conclusion, why, confidence), or None when this is not a counting task (fewer than two expressions)."""
+    replies = _map(lambda role: chat([{"role": "system", "content": role}, {"role": "user", "content": task}], 0.7, 250)[0],
+                   SPECIALISTS_EXPR.values())
+    exprs = {n: computed(t) for n, t in zip(SPECIALISTS_EXPR, replies)}
+    info["expr"] = {n: (list(x) if x else None) for n, x in exprs.items()}
+    good = {n: x for n, x in exprs.items() if x}
+    if len(good) < 2:
+        return None
+    info["specialists"] = {n: (r, f"{e} = {r}") for n, (e, r) in good.items()}
+    results = {key_of(r) for _, r in good.values()}
+    if len(good) == 3 and len(results) == 1:
+        e, r = next(iter(good.values()))
+        info["agree"] = True
+        return r, f"{e} = {r}", "высокая"
+    # the expressions disagree (or one specialist found no expression): the thinker checks them and writes its own
+    info["agree"], info["pause"] = False, True
+    listing = "\n".join(f"- {n}: {e} = {r}" for n, (e, r) in good.items())
+    deep, info["deep_tokens"], info["deep_cut"] = deep_think(f"{task}\n\nВыражения специалистов:\n{listing}",
+                                                             min(think_max, DEEP_BUDGET), 0.0, DEEP_EXPR, "ВЫРАЖЕНИЕ")
+    x = computed(deep)
+    if x:
+        info["deep"] = (x[1], f"{x[0]} = {x[1]}")
+        return x[1], f"{x[0]} = {x[1]}", "средняя"
+    # the thinker wrote no usable expression: the specialists' majority by result, else no conclusion
+    by_key = collections.Counter(key_of(r) for _, r in good.values())
+    top_key, top_n = by_key.most_common(1)[0]
+    if top_n >= 2:
+        e, r = next((e, r) for e, r in good.values() if key_of(r) == top_key)
+        return r, f"{e} = {r}", "низкая"
+    return "", "", "низкая"
+
+
 def answer(q, system, chat, notes, think_max=6000):
     """-> (Neira's in-character answer, info). chat(messages, temperature, max_tokens, **extra) -> (text, usage)."""
     facts = " ".join(notes)
     task = q + (f"\n\n(Справка: {facts})" if facts else "")
     info = {"notes": notes, "specialists": {}, "pause": False}
+    # a counting task has at least two numbers (perception has already turned «двадцать четыре» into 24)
+    if EXPR and len(re.findall(r"\d+(?:[.,]\d+)?", q)) >= 2:
+        got = answer_expr(task, chat, think_max, info)
+        if got:
+            conclusion, why, confidence = got
+            info.update(conclusion=conclusion, confidence=confidence, route="expr")
+            if not conclusion:
+                return "Не знаю: к выводу не пришла.", info
+            text = f"Итог: {conclusion}. {why}"
+            if confidence == "низкая":
+                text += " Но я в этом не до конца уверена."
+            return text, info
+        info["specialists"] = {}
     # v3.8: an organ's note means the answer is computed, not remembered - no vector then
     info["cvec"] = CVEC if CVEC and not notes and erudition(q, chat) else 0.0
     if info["cvec"] and PROBE_THR > 0:
