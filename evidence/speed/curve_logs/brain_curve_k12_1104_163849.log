@@ -1,0 +1,25 @@
+0.00.023.131 I srv  llama_server: initializing ...
+0.00.023.140 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.023.402 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.029.099 I srv    load_model: loading model 'D:\AI\gguf\qwen36\Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf'
+0.00.030.224 I srv    load_model: neira: doubt sensor loaded from D:\AI\expert-map\probe16.json (l_out-16, 2048 weights)
+0.01.833.600 W llama_model_loader: tensor overrides to CPU are used with mmap enabled - consider using --load-mode none for better performance
+0.04.136.788 W llama_neira_hot: CUDA says 4468 MiB free (total - free 3724 MiB, other CUDA programs included), nvidia-smi before start 7531 MiB - ours 2788 MiB (Windows: this process 2788 MiB, weights on the card 2079 MiB) = 4743 MiB
+0.04.136.801 W llama_neira_hot: free VRAM 4468 MiB, reserve 3469 MiB -> 11 of 24 hot experts per layer
+0.04.212.895 I cmn          init: llama threadpool init, n_threads = 6
+0.04.212.904 W cmn  common_init_: KV cache shifting is not supported for this context, disabling KV cache shifting
+0.04.722.901 I common_speculative_init_result: creating MTP draft context against the target model 'D:\AI\gguf\qwen36\Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf'
+0.04.744.160 I srv    load_model: initializing, n_slots = 1, n_ctx_slot = 32768, kv_unified = 'false'
+0.04.800.069 W srv          init: chat template supports preserving reasoning, it is enabled by default (may use more tokens, disable via --no-reasoning-preserve)
+0.04.800.104 I srv  llama_server: model loaded
+0.04.800.108 I srv  llama_server: listening on http://127.0.0.1:8080
+0.11.721.516 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = -1
+0.11.721.552 I slot launch_slot_: id  0 | task 0 | processing task, is_child = 0
+0.17.040.074 I slot print_timing: id  0 | task 0 | prompt processing, n_tokens =    626, progress = 0.23, t =   5.14 s / 121.75 tokens per second
+0.20.183.589 I slot print_timing: id  0 | task 0 | prompt processing, n_tokens =   2670, progress = 1.00, t =   8.36 s / 319.47 tokens per second
+0.20.298.061 I slot print_timing: id  0 | task 0 | prompt eval time =    8576.49 ms /  2674 tokens (    3.21 ms per token,   311.78 tokens per second)
+0.20.298.066 I slot print_timing: id  0 | task 0 |        eval time =       0.00 ms /     1 tokens (    0.00 ms per token,     0.00 tokens per second)
+0.20.298.067 I slot print_timing: id  0 | task 0 |       total time =    8576.49 ms /  2675 tokens
+0.20.298.068 I slot print_timing: id  0 | task 0 |    graphs reused =          0
+0.20.298.069 I slot print_timing: id  0 | task 0 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.20.298.223 I slot      release: id  0 | task 0 | stop processing: n_tokens = 2674, truncated = 0

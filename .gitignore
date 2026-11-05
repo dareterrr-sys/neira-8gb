@@ -14,3 +14,6 @@ __pycache__/
 *.pyc
 *.before-*
 *.last-patch
+
+# evidence/ keeps the raw run logs on purpose: they are the proof of the README numbers
+!evidence/**/*.log
