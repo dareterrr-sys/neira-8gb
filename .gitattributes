@@ -2,3 +2,6 @@
 # (experiments/) and the replaced code (archive/) stay in the repository but are not counted (see README, «Устройство»)
 experiments/** linguist-detectable=false
 archive/** linguist-detectable=false
+
+# cmd.exe misreads LF-only batch files (05.11: an LF start-voice.bat broke Neira-start): always check them out with CRLF
+*.bat text eol=crlf

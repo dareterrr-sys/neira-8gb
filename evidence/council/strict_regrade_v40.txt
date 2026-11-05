@@ -1,0 +1,12 @@
+[32m2026-11-05 04:46:13.822[0m | [1mINFO    [0m | [36mopen_llm_vtuber.agent.agents.basic_memory_agent[0m:[36m<module>[0m:[36m285[0m - [1mNeira organs: loaded=calculator,perception,calendar,letters,words,units,russkiy,ege_one,gramota,council,voice_swap,check_code; missing=memory; COUNCIL_EXPR=0 (council uses 0); NEIRA_CHECK_CODE=1[0m
+council_v40_work3_calc0.json: loose 79/80, strict 72/80, confidently wrong (strict) 8
+   counted OK but conclusion wrong: x012: conclusion='7:40' final='19:36'
+   counted OK but conclusion wrong: x018: conclusion='Боря' final='Витя'
+   counted OK but conclusion wrong: x021: conclusion='14' final='12'
+   counted OK but conclusion wrong: x027: conclusion='Нет' final='Да'
+   counted OK but conclusion wrong: x049: conclusion='нет' final='не получал'
+   counted OK but conclusion wrong: x051: conclusion='Нет' final='Нет, не слепые'
+   counted OK but conclusion wrong: x052: conclusion='8849' final='8849'
+council_v40_hard_calc0.json: loose 49/50, strict 47/50, confidently wrong (strict) 3
+   counted OK but conclusion wrong: m01: conclusion='15' final='23'
+   counted OK but conclusion wrong: h04: conclusion='нет' final='нет доступа к данным'

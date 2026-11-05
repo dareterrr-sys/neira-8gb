@@ -357,7 +357,42 @@ def pron_fixes(text):
     return text
 
 
+# 05.11 (the author: «Да, через хот-фикс», register item 10): a number with an ordinal ending («2023-го», «в 2023-м»,
+# «21-й век») is read as the ordinal in that case and the ending dropped. Before, it was read as a count and the ending
+# stayed («в две тысячи двадцать три-го года»), and the stress judge could not check «года» after «го».
+# Numbers without an ending are read as before (counts). ending -> num2words (case, gender, plural)
+ORDINAL_ENDINGS = {
+    "ого": ("genitive", "m", False), "его": ("genitive", "m", False), "го": ("genitive", "m", False),
+    "ому": ("dative", "m", False), "ему": ("dative", "m", False), "му": ("dative", "m", False),
+    "ым": ("instrumental", "m", False), "им": ("instrumental", "m", False),
+    "ом": ("prepositional", "m", False), "ем": ("prepositional", "m", False), "м": ("prepositional", "m", False),
+    "ый": ("nominative", "m", False), "ий": ("nominative", "m", False), "ой": ("nominative", "m", False),
+    "й": ("nominative", "m", False),
+    "ая": ("nominative", "f", False), "яя": ("nominative", "f", False), "я": ("nominative", "f", False),
+    "ую": ("accusative", "f", False), "юю": ("accusative", "f", False), "ю": ("accusative", "f", False),
+    "ое": ("nominative", "n", False), "ее": ("nominative", "n", False), "е": ("nominative", "n", False),
+    "ых": ("genitive", "m", True), "их": ("genitive", "m", True), "х": ("genitive", "m", True),
+    "ыми": ("instrumental", "m", True), "ими": ("instrumental", "m", True), "ми": ("instrumental", "m", True),
+}
+_ORDINAL_RE = re.compile(r"(?<![\d.,])(\d+)\s?[-–]\s?("
+                         + "|".join(sorted(ORDINAL_ENDINGS, key=len, reverse=True)) + r")(?![А-Яа-яЁё])")
+
+
+def _ordinal(m):
+    n, ending = int(m.group(1)), m.group(2)
+    case, gender, plural = ORDINAL_ENDINGS[ending]
+    # «-е» is also the plural: «90-е», «2000-е», «1990-е годы» (девяностые), not the neuter «третье»
+    if ending in ("е", "ое", "ее") and ((n >= 20 and n % 10 == 0) or re.match(r"\s*год", m.string[m.end():])):
+        plural = True
+    try:
+        return num2words(n, lang="ru", to="ordinal", case=case, gender=gender, plural=plural)
+    except Exception:
+        return m.group(0)
+
+
 def numbers_to_words(text):
+    text = _ORDINAL_RE.sub(_ordinal, text)
+
     def repl(m):
         s = m.group(0).replace(",", ".")
         return num2words(float(s) if "." in s else int(s), lang="ru")
@@ -479,6 +514,43 @@ def stress_marks(text):
         return text
 
 
+_judge_warned = [False]
+
+
+def _stress_judge(path, obj):
+    import urllib.request
+    url = CFG["stress_judge"].rstrip("/") + path
+    req = urllib.request.Request(url, data=json.dumps(obj).encode("utf-8"), headers={"Content-Type": "application/json"})
+    op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    return json.loads(op.open(req, timeout=CFG.get("stress_judge_timeout", 5)).read().decode("utf-8"))
+
+
+def stress_judge_words(spoken):
+    """Stress judge (author 04.11.2026: «Да, делай судьёй»; D:\\AI\\neira-tools\\stress_organ\\stress_judge_service.py,
+    :8094, CPU): the words of the sentence that have a norm (FIPI, or «года» by morphology). [] = nothing to judge;
+    if the judge is not running, the voice speaks as before."""
+    try:
+        return _stress_judge("/words", {"text": spoken})["words"]
+    except Exception as e:
+        if not _judge_warned[0]:
+            log(f"stress judge unavailable ({e!r}): takes are not checked for stress")
+            _judge_warned[0] = True
+        return []
+
+
+def stress_judge_take(wav, sr, spoken):
+    """Number of normed words the take stressed wrong (only the О/А vowel contrast decides), or None if unknown."""
+    import base64
+    try:
+        pcm = (np.clip(np.asarray(wav, dtype=np.float32), -1, 1) * 32767).astype(np.int16).tobytes()
+        r = _stress_judge("/judge", {"text": spoken, "sr": int(sr), "pcm16": base64.b64encode(pcm).decode()})
+        wrong = [f"{w['heard_form']}≠{w['expected_form']}" for w in r["words"] if w["verdict"] == "неверно"]
+        return r["bad"], wrong
+    except Exception as e:
+        log(f"stress judge: {e!r}")
+        return None, []
+
+
 def _journal(text, spoken, sounds, mood, wav, sr):
     """<save_dir>/<day>/<time>_<n>.wav + journal.jsonl (Neira's text with tags, what was spoken, sounds version, mood)."""
     try:
@@ -531,6 +603,9 @@ def _synthesize(spoken, sounds, limit, t0, seq, first, mood=None):
         tries = max(tries, CFG.get("intonation_tries", 2))
     if first:
         tries = min(tries, CFG.get("first_tries", 2))
+    stress_words = stress_judge_words(spoken) if (CFG.get("stress_judge") and not sounds) else []
+    if stress_words:   # a take with a wrong stress is retaken, like one with wrong words
+        tries = max(tries, CFG.get("stress_judge_first_tries", 2) if first else CFG.get("stress_judge_tries", 3))
     # only "ха/хе/хи" laughs are measured against real ones (the tagger hears a snort "Пф-хе", a sigh or "Ах!" as
     # something else even in real recordings), and a laugh gets at most one retake for liveliness
     realness = laugh_judge if (sounds and laugh_judge and LIVELY_RE.search(spoken)) else None
@@ -539,10 +614,12 @@ def _synthesize(spoken, sounds, limit, t0, seq, first, mood=None):
     laugh_min = CFG.get("laugh_min_first", 0.3) if first else CFG.get("laugh_min", 0.6)
     hold = gpu.turn(seq) if first else contextlib.nullcontext()
     with hold:
-        return _takes(spoken, sounds, limit, t0, seq, first, language, tries, max_cer, realness, laugh_min, mood)
+        return _takes(spoken, sounds, limit, t0, seq, first, language, tries, max_cer, realness, laugh_min, mood,
+                      stress_words)
 
 
-def _takes(spoken, sounds, limit, t0, seq, first, language, tries, max_cer, realness, laugh_min, mood=None):
+def _takes(spoken, sounds, limit, t0, seq, first, language, tries, max_cer, realness, laugh_min, mood=None,
+           stress_words=()):
     # (rank, wav, sr): words right first, then the more real laugh, then the take most like the mood; the best is spoken
     plain = spoken.replace("+", "")   # the judges compare words, without the stress marks
     best = None
@@ -587,9 +664,12 @@ def _takes(spoken, sounds, limit, t0, seq, first, language, tries, max_cer, real
         if kur is not None and kur < CFG.get("refvoice_min", 0.0):
             good = False
         inton = intonation_judge.score(wav, sr, plain) if (intonation_judge and not sounds) else None
+        stress_bad, stress_wrong = stress_judge_take(wav, sr, spoken) if stress_words else (None, [])
+        stress_ok = not stress_bad   # None (judge unavailable) counts as ok
         style = (mood_score + (CFG.get("refvoice_weight", 1.0) * kur / 0.003 if kur is not None else 0.0)
                  + (CFG.get("intonation_weight", 1.0) * inton if inton is not None else 0.0))
-        rank = (good, same if same is not None else 1.0, min(real, 1.0) if real is not None else 0.0, style, -cer)
+        rank = (good, stress_ok, same if same is not None else 1.0, min(real, 1.0) if real is not None else 0.0, style,
+                -cer)
         if best is None or rank > best[0]:
             best = (rank, wav, sr)
         # a mood (or the RefVoice judge): another take to choose from while there is time before playback reaches it
@@ -598,14 +678,15 @@ def _takes(spoken, sounds, limit, t0, seq, first, language, tries, max_cer, real
             slack = playback.needed_at(seq) - time.time()
             more = slack >= 0.55 * len(wav) / sr + 2.0
         log(f"judge: take {attempt + 1}{' (colleague)' if who == 'colleague' else ''} "
-            f"{'ok' if good and lively else 'retry'} (words off by {cer:.2f}"
+            f"{'ok' if good and lively and stress_ok else 'retry'} (words off by {cer:.2f}"
             + (f", Neira's voice {same:.2f}" if same is not None else "")
             + (f", sound {real:.0%} of real" if real is not None else "")
             + (f", RefVoice {kur:.3f}" if kur is not None else "")
             + (f", intonation {inton:+.2f}" if inton is not None else "")
+            + (f", stress {'ok' if stress_ok else 'wrong: ' + ' '.join(stress_wrong)}" if stress_bad is not None else "")
             + (f", {mood}: pitch {2 ** (feats[0] / 12):.0f} Hz ±{feats[1]:.1f} st, {feats[2]:.1f} dB, "
                f"{np.exp(feats[3]):.1f}s" if feats is not None else "") + ")")
-        if good and lively and not more:
+        if good and lively and stress_ok and not more:
             break
         if (attempt + 1 == len(plan) and colleague and not sounds and "colleague" not in plan
                 and not best[0][0]):   # all own takes got the words wrong: ask the colleague

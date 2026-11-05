@@ -1,0 +1,100 @@
+[
+ {
+  "target": 0,
+  "k": 0,
+  "reserve": 8000,
+  "brain_vram": 4123,
+  "brain_shared": 448,
+  "speeds": [
+   36.9,
+   37.3,
+   36.7
+  ],
+  "bench": "запись: 36.9, 37.3, 36.7 ток/с\n  черновик MTP принят: 131/202, 131/202, 131/202 (28.10: 134/191)",
+  "log": "D:\\AI\\neira-tools\\field_tests\\results\\brain_curve_k0_1104_163502.log"
+ },
+ {
+  "target": 4,
+  "k": 4,
+  "reserve": 4022,
+  "brain_vram": 4565,
+  "brain_shared": 448,
+  "speeds": [
+   37.5,
+   38.1,
+   41.0
+  ],
+  "bench": "запись: 37.5, 38.1, 41.0 ток/с\n  черновик MTP принят: 133/197, 133/197, 133/197 (28.10: 134/191)",
+  "log": "D:\\AI\\neira-tools\\field_tests\\results\\brain_curve_k4_1104_163630.log"
+ },
+ {
+  "target": 8,
+  "k": 8,
+  "reserve": 3706,
+  "brain_vram": 4859,
+  "brain_shared": 448,
+  "speeds": [
+   34.0,
+   36.7,
+   37.1
+  ],
+  "bench": "запись: 34.0, 36.7, 37.1 ток/с\n  черновик MTP принят: 127/214, 127/214, 127/214 (28.10: 134/191)",
+  "log": "D:\\AI\\neira-tools\\field_tests\\results\\brain_curve_k8_1104_163754.log"
+ },
+ {
+  "target": 12,
+  "k": 12,
+  "reserve": 3390,
+  "brain_vram": 5171,
+  "brain_shared": 448,
+  "speeds": [
+   39.2,
+   39.5,
+   39.4
+  ],
+  "bench": "запись: 39.2, 39.5, 39.4 ток/с\n  черновик MTP принят: 134/192, 134/192, 134/192 (28.10: 134/191)",
+  "log": "D:\\AI\\neira-tools\\field_tests\\results\\brain_curve_k12_1104_163919.log"
+ },
+ {
+  "target": 16,
+  "k": 17,
+  "reserve": 3074,
+  "brain_vram": 5505,
+  "brain_shared": 448,
+  "speeds": [
+   38.3,
+   38.3,
+   38.4
+  ],
+  "bench": "запись: 38.3, 38.3, 38.4 ток/с\n  черновик MTP принят: 132/200, 132/200, 132/200 (28.10: 134/191)",
+  "log": "D:\\AI\\neira-tools\\field_tests\\results\\brain_curve_k16_1104_164042.log"
+ },
+ {
+  "target": 20,
+  "k": 20,
+  "reserve": 2837,
+  "brain_vram": 5737,
+  "brain_shared": 448,
+  "speeds": [
+   41.9,
+   40.0,
+   40.7
+  ],
+  "bench": "запись: 41.9, 40.0, 40.7 ток/с\n  черновик MTP принят: 132/200, 132/200, 132/200 (28.10: 134/191)",
+  "log": "D:\\AI\\neira-tools\\field_tests\\results\\brain_curve_k20_1104_164135.log"
+ },
+ {
+  "target": 24,
+  "k": 24,
+  "reserve": 2521,
+  "brain_vram": 6029,
+  "brain_shared": 448,
+  "speeds": [
+   40.0,
+   42.7,
+   39.4
+  ],
+  "bench": "запись: 40.0, 42.7, 39.4 ток/с\n  черновик MTP принят: 125/219, 125/219, 125/219 (28.10: 134/191)",
+  "log": "D:\\AI\\neira-tools\\field_tests\\results\\brain_curve_k24_1104_164227.log"
+ }
+]
