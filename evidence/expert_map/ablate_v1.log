@@ -1,0 +1,37 @@
+no ablation: counting 22/24, facts 22/24
+layers  0- 7, department off (36 experts): counting 22/24 (+0), facts 23/24 (+1)
+layers  0- 7, random     off (36 experts): counting 23/24 (+1), facts 23/24 (+1)
+layers  8-15, department off (107 experts): counting 22/24 (+0), facts 24/24 (+2)
+layers  8-15, random     off (107 experts): counting 23/24 (+1), facts 24/24 (+2)
+layers 16-23, department off (94 experts): counting 23/24 (+1), facts 24/24 (+2)
+layers 16-23, random     off (94 experts): counting 23/24 (+1), facts 24/24 (+2)
+Traceback (most recent call last):
+  File "D:\AI\expert-map\ablate.py", line 77, in <module>
+    main()
+  File "D:\AI\expert-map\ablate.py", line 68, in main
+    c, f = score(count_q, -1.0 * mask), score(fact_q, -1.0 * mask)
+  File "D:\AI\expert-map\ablate.py", line 43, in score
+    final = council.parse(ask(role, perception.numbers_to_digits(q["q"])))[0]
+  File "D:\AI\expert-map\steer_logic.py", line 69, in ask
+    return json.loads(urllib.request.urlopen(req, timeout=600).read())["content"]
+  File "D:\Programs\uv\python\cpython-3.10-windows-x86_64-none\lib\urllib\request.py", line 216, in urlopen
+    return opener.open(url, data, timeout)
+  File "D:\Programs\uv\python\cpython-3.10-windows-x86_64-none\lib\urllib\request.py", line 519, in open
+    response = self._open(req, data)
+  File "D:\Programs\uv\python\cpython-3.10-windows-x86_64-none\lib\urllib\request.py", line 536, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+  File "D:\Programs\uv\python\cpython-3.10-windows-x86_64-none\lib\urllib\request.py", line 496, in _call_chain
+    result = func(*args)
+  File "D:\Programs\uv\python\cpython-3.10-windows-x86_64-none\lib\urllib\request.py", line 1390, in http_open
+    return self.do_open(http.client.HTTPConnection, req)
+  File "D:\Programs\uv\python\cpython-3.10-windows-x86_64-none\lib\urllib\request.py", line 1365, in do_open
+    r = h.getresponse()
+  File "D:\Programs\uv\python\cpython-3.10-windows-x86_64-none\lib\http\client.py", line 1423, in getresponse
+    response.begin()
+  File "D:\Programs\uv\python\cpython-3.10-windows-x86_64-none\lib\http\client.py", line 330, in begin
+    version, status, reason = self._read_status()
+  File "D:\Programs\uv\python\cpython-3.10-windows-x86_64-none\lib\http\client.py", line 291, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+  File "D:\Programs\uv\python\cpython-3.10-windows-x86_64-none\lib\socket.py", line 717, in readinto
+    return self._sock.recv_into(b)
+ConnectionResetError: [WinError 10054] Удаленный хост принудительно разорвал существующее подключение

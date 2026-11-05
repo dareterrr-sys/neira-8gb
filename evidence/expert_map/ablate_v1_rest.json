@@ -1,0 +1,48 @@
+[
+ {
+  "band": null,
+  "kind": "none",
+  "count": 22,
+  "facts": 22
+ },
+ {
+  "band": [
+   24,
+   31
+  ],
+  "kind": "department",
+  "n_off": 94,
+  "count": 23,
+  "facts": 23
+ },
+ {
+  "band": [
+   24,
+   31
+  ],
+  "kind": "random",
+  "n_off": 94,
+  "count": 22,
+  "facts": 22
+ },
+ {
+  "band": [
+   32,
+   38
+  ],
+  "kind": "department",
+  "n_off": 29,
+  "count": 22,
+  "facts": 22
+ },
+ {
+  "band": [
+   32,
+   38
+  ],
+  "kind": "random",
+  "n_off": 29,
+  "count": 23,
+  "facts": 22
+ }
+]
