@@ -1,0 +1,8 @@
+== council_v310_ru
+RESULT council 10/34 right, 0 honest 'не знаю', 24 confidently wrong | wrong: r2604 r2607 r2609 r2610 r2611 r2612 r2614 r2616 r2617 r2619 r2620 r2504 r2509 r2510 r2511 r2512 r2513 r2514 r2515 r2
+== council_v310_ru_final
+RESULT council 34/34 right, 0 honest 'не знаю', 0 confidently wrong | wrong: 
+== council_v40_ru
+RESULT council 34/34 right, 0 honest 'не знаю', 0 confidently wrong | wrong: 
+== council_v37_ege
+RESULT council 76/82 right, 1 honest 'не знаю', 5 confidently wrong | wrong: e009t e026o e026t e038t? e039o e039t

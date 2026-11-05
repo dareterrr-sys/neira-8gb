@@ -1,0 +1,6 @@
+hard_questions       sent 47/50
+work3_questions      sent 76/80
+work2_questions      sent 71/80
+mgsm_ru_questions    sent 246/250
+work_questions       sent 93/100
+author's chat        sent 0/36

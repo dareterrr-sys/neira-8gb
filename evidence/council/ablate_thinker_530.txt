@@ -1,0 +1,28 @@
+[32m2026-11-05 08:50:33.890[0m | [1mINFO    [0m | [36mopen_llm_vtuber.agent.agents.basic_memory_agent[0m:[36m<module>[0m:[36m287[0m - [1mNeira organs: loaded=calculator,perception,calendar,letters,words,units,russkiy,ege_one,gramota,council,voice_swap,check_code; missing=memory; COUNCIL_EXPR=0 (council uses 0); NEIRA_CHECK_CODE=1[0m
+== runs/council_v310_hard.json: 100 questions (0 without info)
+   final 80/100, conclusion 81, mouth broke 1
+   specialists alone: логик 58, проверяющий 60, адвокат 55; majority 57; any 64
+   fast path 61 (49 right); deep ran 39: right 32, fixed a wrong majority 24, broke a right majority 0
+   sent by red critic 2 (logician was wrong and thinker right: 1); sent by step judge 4 (helped 0)
+   mean time 56.1 s
+[32m2026-11-05 08:50:35.715[0m | [1mINFO    [0m | [36mopen_llm_vtuber.agent.agents.basic_memory_agent[0m:[36m<module>[0m:[36m287[0m - [1mNeira organs: loaded=calculator,perception,calendar,letters,words,units,russkiy,ege_one,gramota,council,voice_swap,check_code; missing=memory; COUNCIL_EXPR=0 (council uses 0); NEIRA_CHECK_CODE=1[0m
+== runs/council_v310_mgsm.json: 250 questions (0 without info)
+   final 229/250, conclusion 230, mouth broke 1
+   specialists alone: логик 208, проверяющий 200, адвокат 197; majority 204; any 216
+   fast path 181 (172 right); deep ran 69: right 58, fixed a wrong majority 26, broke a right majority 0
+   sent by red critic 8 (logician was wrong and thinker right: 1); sent by step judge 10 (helped 0)
+   mean time 49.9 s
+[32m2026-11-05 08:50:37.520[0m | [1mINFO    [0m | [36mopen_llm_vtuber.agent.agents.basic_memory_agent[0m:[36m<module>[0m:[36m287[0m - [1mNeira organs: loaded=calculator,perception,calendar,letters,words,units,russkiy,ege_one,gramota,council,voice_swap,check_code; missing=memory; COUNCIL_EXPR=0 (council uses 0); NEIRA_CHECK_CODE=1[0m
+== runs/council_v311_hard.json: 100 questions (0 without info)
+   final 79/100, conclusion 80, mouth broke 1
+   specialists alone: логик 51, проверяющий 57, адвокат 52; majority 52; any 62
+   fast path 50 (46 right); deep ran 50: right 34, fixed a wrong majority 28, broke a right majority 0
+   sent by red critic 0 (logician was wrong and thinker right: 0); sent by step judge 7 (helped 0)
+   mean time 57.6 s
+[32m2026-11-05 08:50:39.323[0m | [1mINFO    [0m | [36mopen_llm_vtuber.agent.agents.basic_memory_agent[0m:[36m<module>[0m:[36m287[0m - [1mNeira organs: loaded=calculator,perception,calendar,letters,words,units,russkiy,ege_one,gramota,council,voice_swap,check_code; missing=memory; COUNCIL_EXPR=0 (council uses 0); NEIRA_CHECK_CODE=1[0m
+== runs/council_v38_work3.json: 80 questions (0 without info)
+   final 78/80, conclusion 70, mouth broke 0
+   specialists alone: логик 62, проверяющий 61, адвокат 59; majority 61; any 67
+   fast path 66 (65 right); deep ran 14: right 12, fixed a wrong majority 9, broke a right majority 0
+   sent by red critic 2 (logician was wrong and thinker right: 1); sent by step judge 0 (helped 0)
+   mean time 34.0 s
