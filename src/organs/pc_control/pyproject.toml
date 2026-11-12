@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pc_control"
+version = "0.1.0"
+description = "Neira: screen capture and mouse/keyboard control with safety guards (Windows, SendInput)"
+requires-python = ">=3.10"
+dependencies = ["mss>=9", "Pillow>=10", "uiautomation>=2.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.setuptools]
+packages = ["pc_control"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: real cursor/keyboard; skipped unless the user idle >= 300 s"]

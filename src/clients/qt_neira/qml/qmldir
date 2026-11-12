@@ -1,0 +1,21 @@
+singleton Theme 1.0 Theme.qml
+singleton Markdown 1.0 Markdown.qml
+NIcon 1.0 NIcon.qml
+NeuraSwitch 1.0 NeuraSwitch.qml
+MsgAction 1.0 MsgAction.qml
+StatusRow 1.0 StatusRow.qml
+HeaderButton 1.0 HeaderButton.qml
+Header 1.0 Header.qml
+Sidebar 1.0 Sidebar.qml
+ChatListItem 1.0 ChatListItem.qml
+ChatView 1.0 ChatView.qml
+MessageBubble 1.0 MessageBubble.qml
+MessageBody 1.0 MessageBody.qml
+Composer 1.0 Composer.qml
+SendButton 1.0 SendButton.qml
+StagePanel 1.0 StagePanel.qml
+NeiraAvatar 1.0 NeiraAvatar.qml
+SettingsPanel 1.0 SettingsPanel.qml
+PcControl 1.0 PcControl.qml
+PcConfirmCard 1.0 PcConfirmCard.qml
+DemoScript 1.0 DemoScript.qml

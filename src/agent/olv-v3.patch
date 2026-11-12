@@ -1,0 +1,328 @@
+diff --git a/model_dict.json b/model_dict.json
+index e7682cf..37a179c 100644
+--- a/model_dict.json
++++ b/model_dict.json
+@@ -26,5 +26,61 @@
+                 "": 1
+             }
+         }
++    },
++    {
++        "name": "izumi_illust",
++        "description": "",
++        "url": "/live2d-models/izumi_illust/izumi_illust.model3.json",
++        "kScale": 0.5,
++        "initialXshift": 0,
++        "initialYshift": 0,
++        "kXOffset": 0,
++        "idleMotionGroupName": "Idle",
++        "emotionMap": {
++            "neutral": 3,
++            "anger": 0,
++            "disgust": 0,
++            "fear": 6,
++            "joy": 5,
++            "smirk": 5,
++            "sadness": 4,
++            "surprise": 6
++        },
++        "tapMotions": {}
++    },
++    {
++        "name": "miku_pro",
++        "description": "",
++        "url": "/live2d-models/miku_pro/runtime/miku_sample_t04.model3.json",
++        "kScale": 0.5,
++        "initialXshift": 0,
++        "initialYshift": 0,
++        "kXOffset": 0,
++        "idleMotionGroupName": "Idle",
++        "promptKeys": ["calm", "predator", "interest", "disdain", "villain_laugh", "cold_anger", "surprise", "thoughtful", "smug", "embarrassed", "bored", "wink", "cute", "sad", "fear"],
++        "emotionMap": {
++            "calm": 0,
++            "predator": 0,
++            "interest": 0,
++            "disdain": 0,
++            "villain_laugh": 0,
++            "cold_anger": 0,
++            "surprise": 0,
++            "thoughtful": 0,
++            "smug": 0,
++            "embarrassed": 0,
++            "bored": 0,
++            "wink": 0,
++            "cute": 0,
++            "sad": 0,
++            "fear": 0,
++            "neutral": 0,
++            "anger": 0,
++            "disgust": 0,
++            "joy": 0,
++            "smirk": 0,
++            "sadness": 0
++        },
++        "tapMotions": {}
+     }
+ ]
+\ No newline at end of file
+diff --git a/prompts/utils/live2d_expression_prompt.txt b/prompts/utils/live2d_expression_prompt.txt
+index f3ab5cb..e4c9aff 100644
+--- a/prompts/utils/live2d_expression_prompt.txt
++++ b/prompts/utils/live2d_expression_prompt.txt
+@@ -4,11 +4,28 @@ In your response, use the keywords provided below to express facial expressions
+ Here are all the expression keywords you can use. Use them regularly:
+ - [<insert_emomap_keys>]
+ 
+-## Examples
+-Here are some examples of how to use expressions in your responses:
+-
+-"Hi! [expression1] Nice to meet you!"
++## How to choose
++The face has 15 expressions. Choose the keyword by the meaning and feeling of each sentence, and put a new keyword before every sentence whose feeling differs. Use many different keywords; never repeat the same one just out of habit. Write your own words every time, never copy the wording of the situations below.
++Use [calm] ONLY when the sentence has no feeling at all (a dry fact, a number, the time, a plain instruction).
++When to use each of the 15:
++- [surprise] unexpected news or a twist, something you did not expect: "wow", "what?!", "really?"
++- [wink] the user jokes, teases, plans a prank, shares a secret, or flirts with you playfully
++- [cute] warmth and tenderness: thanks, care, a gift, a pet or kitten, a sweet small thing, cheering the user up
++- [sad] sorrow, pity, loss (a dead pet), loneliness, apology
++- [fear] danger, being followed, a noise at the door, anxiety, dread
++- [cold_anger] injustice, being accused or robbed, irritation, restrained anger
++- [villain_laugh] gloating triumph, winning big, evil joy, "hahaha"
++- [predator] cold hunting excitement, a threat, "I've got you", catching someone
++- [smug] proud of herself, "I told you so", sly satisfaction when she is right
++- [embarrassed] shy, flustered when praised for her looks or flirted with
++- [disdain] contempt, disgust at something low or dirty
++- [bored] tired, dull, "again this", routine
++- [thoughtful] weighing a choice, doubt, "hmm, let me think"
++- [interest] curiosity about a deep question, wanting to know more
++- [calm] no feeling, plain statement
+ 
+-"[expression2] That's a great question! [expression3] Let me explain..."
++## Examples
++Situation -> how the reply starts (the words are yours):
++User tells shocking news -> "[surprise] ..."; user proposes a prank -> "[wink] ..."; user thanks you or brings a gift -> "[cute] ..."; a pet died -> "[sad] ..."; a noise at the door -> "[fear] ..."; user was accused unjustly -> "[cold_anger] ..."; user won big -> "[villain_laugh] ..."; user is clever and cheeky -> "[wink] ..."; user admires how you look -> "[embarrassed] ..."; user asks why the sky is blue -> "[interest] ... [calm] ..."; user asks the time -> "[calm] ...".
+ 
+ Note: you are only allowed to use the keywords explicity listed above. Don't use keywords unlisted above. Remember to include the brackets `[]`
+diff --git a/src/open_llm_vtuber/agent/stateless_llm/openai_compatible_llm.py b/src/open_llm_vtuber/agent/stateless_llm/openai_compatible_llm.py
+index 6242c63..c62759c 100644
+--- a/src/open_llm_vtuber/agent/stateless_llm/openai_compatible_llm.py
++++ b/src/open_llm_vtuber/agent/stateless_llm/openai_compatible_llm.py
+@@ -81,6 +81,7 @@ class AsyncLLM(StatelessLLMInterface):
+         - APIError: For other API-related errors
+         """
+         stream = None
++        self.last_timings = None   # llama-server `timings` of this call, read by neira_signals.send_stats
+         # Tool call related state variables
+         accumulated_tool_calls = {}
+         in_tool_call = False
+@@ -111,6 +112,10 @@ class AsyncLLM(StatelessLLMInterface):
+             )
+ 
+             async for chunk in stream:
++                # llama-server puts real speed numbers into the last chunk as an extra `timings` field
++                timings = (getattr(chunk, "model_extra", None) or {}).get("timings")
++                if timings:
++                    self.last_timings = timings
+                 # Guard against chunks with missing choices field (e.g., from OpenWebUI)
+                 if not chunk.choices:
+                     continue
+diff --git a/src/open_llm_vtuber/agent/transformers.py b/src/open_llm_vtuber/agent/transformers.py
+index 4a218ea..3d4c39a 100644
+--- a/src/open_llm_vtuber/agent/transformers.py
++++ b/src/open_llm_vtuber/agent/transformers.py
+@@ -1,3 +1,4 @@
++import re
+ from typing import AsyncIterator, Tuple, Callable, List, Union, Dict, Any
+ from functools import wraps
+ from .output_types import Actions, SentenceOutput, DisplayText
+@@ -55,6 +56,25 @@ def sentence_divider(
+     return decorator
+ 
+ 
++_LEADING_TAGS = re.compile(r"^\s*((?:\[[^\[\]]+\]\s*)+)")
++_ANY_TAG = re.compile(r"\[([^\[\]]+)\]")
++
++
++def _spread_tags(text: str, live2d_model: Live2dModel, pending: list) -> str:
++    """Return the sentence text with its emotion tags spread over the answer (see actions_extractor)."""
++    keys = {k.lower() for k in live2d_model.emo_map}
++    m = _LEADING_TAGS.match(text)
++    if m:
++        names = [n for n in _ANY_TAG.findall(m.group(1)) if n.lower() in keys]
++        if len(names) > 1:
++            pending.extend(names[1:])
++            return f"[{names[0]}] " + text[m.end():]
++        return text
++    if pending and live2d_model.remove_emotion_keywords(text).strip() and not _ANY_TAG.search(text):
++        return f"[{pending.pop(0)}] " + text
++    return text
++
++
+ def actions_extractor(live2d_model: Live2dModel):
+     """
+     Decorator that extracts actions from sentences, passing through dicts.
+@@ -74,6 +94,11 @@ def actions_extractor(live2d_model: Live2dModel):
+             Union[Tuple[SentenceWithTags, Actions], Dict[str, Any]]
+         ]:  # Yield type hint
+             stream = func(*args, **kwargs)
++            # The brain tends to stack all emotion tags at the start of the answer ("[a][b][c] s1. s2. s3."), so the
++            # face did not change as she spoke. Keep the first tag at its own sentence and move the rest to the
++            # following sentences that have no tag of their own, in order (1st tag -> 1st sentence, 2nd -> 2nd, ...).
++            # The text of the sentence is rewritten: the Qt client takes the face from the tags in each sentence.
++            pending: list = []
+             async for item in stream:
+                 if isinstance(item, SentenceWithTags):
+                     sentence = item
+@@ -83,6 +108,7 @@ def actions_extractor(live2d_model: Live2dModel):
+                         tag.state in [TagState.START, TagState.END]
+                         for tag in sentence.tags
+                     ):
++                        sentence.text = _spread_tags(sentence.text, live2d_model, pending)
+                         expressions = live2d_model.extract_emotion(sentence.text)
+                         if expressions:
+                             actions.expressions = expressions
+@@ -198,6 +224,9 @@ def tts_filter(
+                             ignore_angle_brackets=config.ignore_angle_brackets,
+                         )
+ 
++                    # {смех}-style sound tags are for the voice only, hide them from subtitles
++                    display.text = re.sub(r"\{[^{}]*\}", "", display.text).strip()
++
+                     logger.debug(f"[{display.name}] display: {display.text}")
+                     logger.debug(f"[{display.name}] tts: {tts}")
+ 
+diff --git a/src/open_llm_vtuber/conversations/single_conversation.py b/src/open_llm_vtuber/conversations/single_conversation.py
+index 493fa9c..d6de934 100644
+--- a/src/open_llm_vtuber/conversations/single_conversation.py
++++ b/src/open_llm_vtuber/conversations/single_conversation.py
+@@ -17,6 +17,7 @@ from .types import WebSocketSend
+ from .tts_manager import TTSTaskManager
+ from ..chat_history_manager import store_message
+ from ..service_context import ServiceContext
++from .. import pc_hook
+ 
+ # Import necessary types from agent outputs
+ from ..agent.output_types import SentenceOutput, AudioOutput
+@@ -59,6 +60,21 @@ async def process_single_conversation(
+             user_input, context.asr_engine, websocket_send
+         )
+ 
++        # PC control (v3, 10.11): «включи управление», «посмотри на экран», tasks while control is on. The agent gets a
++        # system note (and the snapshot) instead of the raw command; the chat history keeps what the user said.
++        history_text = input_text
++        try:
++            pc_turn = await pc_hook.rewrite_turn(input_text, websocket_send, client_uid)
++        except asyncio.CancelledError:
++            raise
++        except Exception as e:
++            logger.warning(f"pc_hook failed: {e}")
++            pc_turn = None
++        if pc_turn is not None:
++            input_text = pc_turn.text
++            if pc_turn.images:
++                images = (images or []) + pc_turn.images
++
+         # Create batch input
+         batch_input = create_batch_input(
+             input_text=input_text,
+@@ -74,7 +90,7 @@ async def process_single_conversation(
+                 conf_uid=context.character_config.conf_uid,
+                 history_uid=context.history_uid,
+                 role="human",
+-                content=input_text,
++                content=history_text,
+                 name=context.character_config.human_name,
+             )
+ 
+@@ -159,6 +175,28 @@ async def process_single_conversation(
+             )
+             logger.info(f"AI response: {full_response}")
+ 
++        # 05.11 (the author, B1 «После речи»): organs that work once the speech is over (the check_code organ's autofix
++        # and its text result); an error of the organ must not break the talk
++        after_speech = getattr(context.agent_engine, "after_speech", None)
++        if after_speech is not None:
++            try:
++                await after_speech(
++                    websocket_send,
++                    display_name=context.character_config.character_name,
++                    avatar=context.character_config.avatar,
++                )
++            except Exception as e:
++                logger.warning(f"after_speech hook failed: {e}")
++
++        # neira-stats: real generation speed of this answer for the Qt app (llama-server timings)
++        try:
++            from ..neira_signals import send_stats, send_stress
++            llm = getattr(context.agent_engine, "_llm", None)
++            await send_stats(websocket_send, llm)
++            await send_stress(websocket_send, llm)   # system load (VRAM / speed), not the stress_organ (word stress)
++        except Exception as e:
++            logger.warning(f"neira-stats failed: {e}")
++
+         return full_response  # Return accumulated full_response
+ 
+     except asyncio.CancelledError:
+@@ -166,6 +204,11 @@ async def process_single_conversation(
+         raise
+     except Exception as e:
+         logger.error(f"Error in conversation chain: {e}")
++        try:
++            from ..neira_signals import send_stress
++            await send_stress(websocket_send, None, failed=True)   # the brain failed / timed out: overload for this turn
++        except Exception:
++            pass
+         await websocket_send(
+             json.dumps({"type": "error", "message": f"Conversation error: {str(e)}"})
+         )
+diff --git a/src/open_llm_vtuber/live2d_model.py b/src/open_llm_vtuber/live2d_model.py
+index d315a42..408663a 100644
+--- a/src/open_llm_vtuber/live2d_model.py
++++ b/src/open_llm_vtuber/live2d_model.py
+@@ -48,7 +48,9 @@ class Live2dModel:
+         self.emo_map: dict = {
+             k.lower(): v for k, v in self.model_info["emotionMap"].items()
+         }
+-        self.emo_str: str = " ".join([f"[{key}]," for key in self.emo_map.keys()])
++        # v3 (11.11): "promptKeys" - only these go into the prompt; other keys stay in emo_map just to be stripped from the text
++        shown = [k.lower() for k in self.model_info.get("promptKeys", list(self.emo_map.keys()))]
++        self.emo_str: str = " ".join([f"[{key}]," for key in shown])
+         # emo_str is a string of the keys in the emoMap dictionary. The keys are enclosed in square brackets.
+         # example: `"[fear], [anger], [disgust], [sadness], [joy], [neutral], [surprise]"`
+ 
+diff --git a/src/open_llm_vtuber/websocket_handler.py b/src/open_llm_vtuber/websocket_handler.py
+index 41368a6..9d280fd 100644
+--- a/src/open_llm_vtuber/websocket_handler.py
++++ b/src/open_llm_vtuber/websocket_handler.py
+@@ -27,6 +27,7 @@ from .conversations.conversation_handler import (
+     handle_group_interrupt,
+     handle_individual_interrupt,
+ )
++from . import pc_hook
+ 
+ 
+ class MessageType(Enum):
+@@ -95,6 +96,10 @@ class WebSocketHandler:
+             "audio-play-start": self._handle_audio_play_start,
+             "request-init-config": self._handle_init_config_request,
+             "heartbeat": self._handle_heartbeat,
++            # PC control (v3, 10.11): the Qt button and the confirmation card
++            "pc-control-enable": pc_hook.ws_enable,
++            "pc-control-disable": pc_hook.ws_disable,
++            "pc-control-confirm": pc_hook.ws_confirm,
+         }
+ 
+     async def handle_new_connection(
+@@ -175,6 +180,12 @@ class WebSocketHandler:
+         # Start microphone
+         await websocket.send_text(json.dumps({"type": "control", "text": "start-mic"}))
+ 
++        # PC control: the Qt button appears once the server sends pc-control-* (v3, 10.11)
++        try:
++            await pc_hook.announce(websocket, client_uid)
++        except Exception as e:
++            logger.warning(f"pc-control status not sent: {e}")
++
+     async def _init_service_context(
+         self, send_text: Callable, client_uid: str
+     ) -> ServiceContext:

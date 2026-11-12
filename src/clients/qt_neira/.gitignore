@@ -1,0 +1,28 @@
+# бинарники и библиотеки Qt
+*.dll
+*.exe
+*.log
+*.lnk
+# резервные копии (теперь история в git)
+*.before-*
+*.backup*
+*.running-old
+# плагины и ресурсы Qt, скопированные рядом
+/generic/
+/iconengines/
+/imageformats/
+/networkinformation/
+/platforms/
+/qmltooling/
+/tls/
+/translations/
+/qml/QML/
+/qml/QtQml/
+/qml/QtQuick/
+/qml/Qt*/
+# генерируемое сборкой
+moc_*.cpp
+# мусор в qml/ (снимки и вывод; сами файлы не удаляем)
+/qml/*.png
+/qml/err.txt
+/qml/out.txt

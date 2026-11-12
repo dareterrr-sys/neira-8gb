@@ -10,6 +10,7 @@ from typing import (
 )
 import asyncio
 import datetime
+import json
 import time
 import os
 import re
@@ -17,6 +18,7 @@ import re
 from loguru import logger
 from .agent_interface import AgentInterface
 from ..output_types import SentenceOutput, DisplayText
+from ...utils.stream_audio import prepare_audio_payload
 from ..stateless_llm.stateless_llm_interface import StatelessLLMInterface
 from ..stateless_llm.claude_llm import AsyncLLM as ClaudeAsyncLLM
 from ..stateless_llm.openai_compatible_llm import AsyncLLM as OpenAICompatibleAsyncLLM
@@ -266,6 +268,19 @@ if os.environ.get("NEIRA_CHECK_CODE", "1") != "0":
         CHECK_CODE = None
         logger.warning(f"Neira check_code not loaded: {_e}")
 
+# Neira's PC control organ (v3, 10.11, register item 19; neira-tools/pc_control_organ.py + the pc_control package):
+# «включи управление» / the Qt button -> mouse and keyboard by the author's limits; «посмотри на экран» -> a snapshot to
+# the brain. The glue is open_llm_vtuber/pc_hook.py. NEIRA_PC_CONTROL=0 turns it off.
+PC_CONTROL = None
+PC_ORGAN = None
+if os.environ.get("NEIRA_PC_CONTROL", "1") != "0":
+    try:
+        PC_CONTROL = _load_tool("pc_control_organ", r"D:\AI\neira-tools\pc_control_organ.py")
+        PC_ORGAN = PC_CONTROL.Organ()
+    except Exception as _e:
+        PC_CONTROL = PC_ORGAN = None
+        logger.warning(f"Neira pc_control not loaded: {_e}")
+
 # 04.11, the build self-check (field_tests/build_check.py reads this line): which organs are loaded and the council mode
 _ORGAN_STATE = {
     "memory": NEIRA_MEMORY is not None,
@@ -281,6 +296,7 @@ _ORGAN_STATE = {
     "council": COUNCIL is not None,
     "voice_swap": VOICE_SWAP is not None,
     "check_code": CHECK_CODE is not None,
+    "pc_control": PC_ORGAN is not None,
 }
 logger.info("Neira organs: loaded=" + ",".join(k for k, v in _ORGAN_STATE.items() if v)
             + "; missing=" + (",".join(k for k, v in _ORGAN_STATE.items() if not v) or "none")
@@ -374,6 +390,7 @@ class BasicMemoryAgent(AgentInterface):
         self._interrupt_handled = False
         self.prompt_mode_flag = False
         self._last_code_check = None   # the check_code organ's last result: {"code", "note"}
+        self._code_to_check = ""       # her last answer with code, for after_speech
 
         self._tool_manager = tool_manager
         self._tool_executor = tool_executor
@@ -705,6 +722,11 @@ class BasicMemoryAgent(AgentInterface):
                     notes.append(note)
                 logger.info(f"Dispatcher: council -> {info.get('conclusion')!r} ({info.get('confidence')}, "
                             f"thinker {'yes' if info.get('pause') else 'no'})")
+                # the doubt sensor (probe) and the «не знаю» vector (cvec) of this council turn, for the logs
+                probe_s = f"{info['probe']:.2f}" if isinstance(info.get("probe"), (int, float)) else "нет"
+                logger.info(f"council: probe={probe_s} (threshold "
+                            f"{getattr(getattr(COUNCIL, 'council', None), 'PROBE_THR', 0.5)}), "
+                            f"cvec={info.get('cvec', 0.0)}")
             except Exception as e:
                 logger.warning(f"Dispatcher: council failed: {e}")
             timing["council"] = time.perf_counter() - t
@@ -715,18 +737,59 @@ class BasicMemoryAgent(AgentInterface):
         self._timing = {"turn_start": t0, **timing}
         logger.info("Timing: " + ", ".join(f"{k} {v * 1000:.0f} ms" for k, v in timing.items()))
 
-    async def _check_code(self, text: str) -> None:
-        """After her answer: the C blocks in it go through check_code.exe, as in the text chat (all blocks together);
-        the result goes to the log. Not wired yet (open questions to the HQ, 04.11): the autofix (more brain calls while
-        the voice is back - the voice and the brain do not share the GPU, 29.10) and what she says or shows about it."""
+    async def _say_text(self, websocket_send, text: str, display_name: str = "AI", avatar=None) -> None:
+        """Text into the chat window without a voice: a silent payload (audio=null + display_text), as the TTS manager
+        sends for a sentence with nothing to speak."""
+        payload = prepare_audio_payload(
+            audio_path=None, display_text=DisplayText(text=text, name=display_name, avatar=avatar))
+        await websocket_send(json.dumps(payload))
+
+    async def after_speech(self, websocket_send, display_name: str = "AI", avatar=None) -> None:
+        """Called by the conversation once her speech is over (single_conversation.py, 05.11, the author's B1 «После
+        речи»). The C blocks of her answer go through check_code.exe, as in the text chat (all blocks together). On an
+        error she fixes the code with the brain (up to CHECK_CODE.AUTOFIX_ROUNDS times, the text chat's request); the
+        result is shown as text in the chat window (B2), never spoken. Only C blocks are checked (B3)."""
+        text, self._code_to_check = self._code_to_check, ""
+        if not (CHECK_CODE and text):
+            return
         blocks = CHECK_CODE.extract_c_blocks(text)
         if not blocks:
             return
         code = "\n\n".join(blocks)
         t = time.perf_counter()
+        logger.info(f"check_code: the speech is over, checking {len(blocks)} C blocks")
         note = await asyncio.to_thread(CHECK_CODE.run_check, code)
         self._last_code_check = {"code": code, "note": note}
-        logger.info(f"check_code: {CHECK_CODE.summary(note)} ({len(blocks)} C blocks, {time.perf_counter() - t:.1f} s)")
+        logger.info(f"check_code: {CHECK_CODE.summary(note)} ({time.perf_counter() - t:.1f} s)")
+        if note.get("ok"):
+            await self._say_text(websocket_send, "✅ проверено", display_name, avatar)
+            return
+        await self._say_text(websocket_send, CHECK_CODE.error_line(note), display_name, avatar)
+        if not hasattr(self._llm, "client"):
+            return
+        for attempt in range(1, CHECK_CODE.AUTOFIX_ROUNDS + 1):
+            logger.info(f"check_code: autofix {attempt}, asking the brain")
+            try:
+                r = await self._llm.client.chat.completions.create(
+                    model=self._llm.model, temperature=0.3, max_tokens=4096,
+                    messages=[{"role": "system", "content": CHECK_CODE.FIX_SYSTEM},
+                              {"role": "assistant", "content": "```c\n" + code + "\n```"},
+                              {"role": "user", "content": CHECK_CODE.fix_prompt(note)}])
+            except Exception as e:
+                logger.warning(f"check_code: autofix call failed: {e}")
+                return
+            fixed = CHECK_CODE.extract_c_blocks(r.choices[0].message.content or "")
+            if not fixed:
+                logger.info("check_code: no C code in the fix reply, stopping")
+                return
+            code = "\n\n".join(fixed)
+            note = await asyncio.to_thread(CHECK_CODE.run_check, code)
+            self._last_code_check = {"code": code, "note": note}
+            logger.info(f"check_code: autofix {attempt}: {CHECK_CODE.summary(note)}")
+            if note.get("ok"):
+                await self._say_text(websocket_send, "```c\n" + code + "\n```\n✅ проверено", display_name, avatar)
+                return
+            await self._say_text(websocket_send, CHECK_CODE.error_line(note), display_name, avatar)
 
     async def _remember(self, text: str) -> None:
         """After the answer: a persona-free request writes down lasting facts from the user's words (neira_memory)."""
@@ -1100,6 +1163,7 @@ class BasicMemoryAgent(AgentInterface):
             """Process chat with memory and tools."""
             self.reset_interrupt()
             self.prompt_mode_flag = False
+            self._code_to_check = ""   # a new turn: the last answer's code is not checked any more
 
             messages = self._to_messages(input_data)
             # Sequential mode (29.10, the author's choice): the voice and the brain never share the GPU - with a game
@@ -1199,7 +1263,7 @@ class BasicMemoryAgent(AgentInterface):
                 if NEIRA_MEMORY and self._turn_text:   # the brain is free now: write down what was learned
                     asyncio.create_task(self._remember(self._turn_text))
                 if CHECK_CODE and "```" in answer_text:
-                    asyncio.create_task(self._check_code(answer_text))
+                    self._code_to_check = answer_text   # checked in after_speech, once the voice has finished
                 return
             else:
                 logger.info("Starting simple chat completion.")
@@ -1225,7 +1289,7 @@ class BasicMemoryAgent(AgentInterface):
                 if complete_response:
                     self._add_message(complete_response, "assistant")
                 if CHECK_CODE and "```" in complete_response:
-                    asyncio.create_task(self._check_code(complete_response))
+                    self._code_to_check = complete_response   # checked in after_speech, once the voice has finished
 
         return chat_with_memory
 

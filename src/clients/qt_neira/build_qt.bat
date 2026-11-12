@@ -17,7 +17,7 @@ if not exist "%QT%\bin\moc.exe" (
   -o "%SRC%\neira_qt.exe" ^
   -I"%QT%\include" -I"%QT%\include\QtCore" -I"%QT%\include\QtGui" ^
   -I"%QT%\include\QtQml" -I"%QT%\include\QtQuick" -I"%QT%\include\QtQuickControls2" ^
-  -L"%QT%\lib" -lQt6Core -lQt6Gui -lQt6Qml -lQt6Quick -lQt6QuickControls2 -lws2_32 -mwindows
+  -L"%QT%\lib" -lQt6Core -lQt6Gui -lQt6Qml -lQt6Quick -lQt6QuickControls2 -lws2_32 -lwinmm -lcomdlg32 -mwindows
 
 if errorlevel 1 (
   echo СБОРКА ОШИБКА
